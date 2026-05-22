@@ -70,12 +70,9 @@ namespace MEPAutoRouting.Core
                         TaskDialog.Show(
                             "A* Debug",
                             "A* reached max iterations. Fallback to L-shape." +
-                            "
-Iterations: " + iterations +
-                            "
-GridSize(ft): " + GridSize +
-                            "
-Obstacles: " + obstacles.Count);
+                            Environment.NewLine + "Iterations: " + iterations +
+                            Environment.NewLine + "GridSize(ft): " + GridSize +
+                            Environment.NewLine + "Obstacles: " + obstacles.Count);
 
                         return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
                     }
@@ -130,10 +127,8 @@ Obstacles: " + obstacles.Count);
                 TaskDialog.Show(
                     "A* Debug",
                     "A* could not find a path. Fallback to L-shape." +
-                    "
-GridSize(ft): " + GridSize +
-                    "
-Obstacles: " + obstacles.Count);
+                    Environment.NewLine + "GridSize(ft): " + GridSize +
+                    Environment.NewLine + "Obstacles: " + obstacles.Count);
 
                 return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
             }
