@@ -1,0 +1,13 @@
+L:\m.kwok\VS code\MEPAutoRouting\bin\Debug\net48\MEPAutoRouting.dll
+L:\m.kwok\VS code\MEPAutoRouting\bin\Debug\net48\MEPAutoRouting.pdb
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.csproj.AssemblyReference.cache
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\Routing\UnifiedRoutingUI.baml
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\Routing\UnifiedRoutingUI.g.cs
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting_MarkupCompile.cache
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.g.resources
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.GeneratedMSBuildEditorConfig.editorconfig
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.AssemblyInfoInputs.cache
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.AssemblyInfo.cs
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.csproj.CoreCompileInputs.cache
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.dll
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.pdb
