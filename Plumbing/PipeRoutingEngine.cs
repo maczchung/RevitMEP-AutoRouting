@@ -15,7 +15,6 @@ namespace MEPAutoRouting.Plumbing
 
         public List<XYZ> GeneratePath(XYZ start, XYZ end)
         {
-            // 將 Document 傳入，讓 A* 演算法可以擷取障礙物
             AStarPathfinder astar = new AStarPathfinder(_doc);
             return astar.FindPath(start, end);
         }
