@@ -6,27 +6,30 @@ using Autodesk.Revit.UI;
 namespace MEPAutoRouting.Core
 {
     /// <summary>
-    /// Tuned A* for MEP routing inside a selected host Room / Space / Mass / Generic Model volume.
-    /// Goals:
-    /// 1. Route must stay inside routingBounds when routingBounds is provided.
-    /// 2. Prefer horizontal movement and avoid unnecessary Z movement.
-    /// 3. Reduce zig-zag by adding turn penalty and centerline bias.
-    /// 4. Avoid host/link walls/columns/framing from GeometryExtractor.
+    /// A* RouteFix version for corridor / routing-volume based MEP routing.
+    ///
+    /// Main fixes:
+    /// - Fixed-Z routing by default to avoid unnecessary up/down movement.
+    /// - Segment collision check to reduce pipe crossing thin walls/partitions.
+    /// - Stronger obstacle tolerance to keep clearance from walls.
+    /// - Reduced zig-zag by stronger turn penalty.
+    /// - Optional routing bounds support from Room / Space / Mass / Generic Model.
+    ///
+    /// Revit internal units are feet.
     /// </summary>
     public class AStarPathfinder
     {
         private readonly Document _doc;
         private readonly BoundingBoxXYZ _routingBounds;
 
-        // Revit internal unit = feet.
-        private const double GridSize = 1.0;              // 1 ft gives better routing than 2 ft but still safe.
-        private const int MarginCells = 8;                // fallback only when no routing volume is selected.
-        private const int MaxIterations = 90000;          // fail-safe.
-        private const double TurnPenalty = 8.0;           // stronger straight-line preference.
-        private const double ZMovePenalty = 30.0;         // strongly avoid vertical movement.
-        private const double CenterBiasFactor = 0.15;     // small cost to keep route near volume center.
-        private const double ObstacleToleranceFactor = 0.25;
-        private const double EscapeZoneCells = 2.0;
+        // === Tuning parameters ===
+        private const double GridSize = 1.0;                 // 1 ft grid, better than 2 ft for corridor routing.
+        private const int MarginCells = 8;                   // Used only when no routing volume is provided.
+        private const int MaxIterations = 120000;            // Fail-safe to avoid Revit freeze.
+        private const double TurnPenalty = 12.0;             // Strongly reduce zig-zag.
+        private const double ObstacleToleranceFactor = 0.80; // Enlarge wall/partition obstruction.
+        private const double EscapeZoneCells = 1.5;          // Allow start/end connectors to escape nearby equipment.
+        private const double SegmentSampleStepFactor = 0.50; // Segment collision sample spacing = GridSize * factor.
 
         public AStarPathfinder(Document doc)
         {
@@ -56,7 +59,7 @@ namespace MEPAutoRouting.Core
                 {
                     if (!IsInsideBox(start, box.Min, box.Max) || !IsInsideBox(end, box.Min, box.Max))
                     {
-                        TaskDialog.Show("A* Debug", "Start or End is outside routing volume. Fallback to L-shape.");
+                        TaskDialog.Show("A* RouteFix", "Start or End is outside routing volume. Fallback to L-shape.");
                         return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
                     }
                 }
@@ -64,6 +67,7 @@ namespace MEPAutoRouting.Core
                 List<BoundingBoxXYZ> obstacles = GetObstacleBoxes();
 
                 Dictionary<string, AStarNode> grid = new Dictionary<string, AStarNode>();
+
                 AStarNode startNode = GetOrCreateNode(grid, start, box, obstacles, start, end);
                 AStarNode endNode = GetOrCreateNode(grid, end, box, obstacles, start, end);
 
@@ -74,6 +78,7 @@ namespace MEPAutoRouting.Core
 
                 MinHeap<AStarNode> openHeap = new MinHeap<AStarNode>();
                 HashSet<string> closedSet = new HashSet<string>();
+
                 openHeap.Push(startNode, startNode.FCost);
 
                 int iterations = 0;
@@ -81,10 +86,11 @@ namespace MEPAutoRouting.Core
                 while (openHeap.Count > 0)
                 {
                     iterations++;
+
                     if (iterations > MaxIterations)
                     {
                         TaskDialog.Show(
-                            "A* Debug",
+                            "A* RouteFix",
                             "A* reached max iterations. Fallback to L-shape." +
                             Environment.NewLine + "Iterations: " + iterations +
                             Environment.NewLine + "GridSize(ft): " + GridSize +
@@ -112,13 +118,13 @@ namespace MEPAutoRouting.Core
                         if (neighbor.IsObstacle || closedSet.Contains(neighbor.Id))
                             continue;
 
+                        // Additional segment collision test. This prevents a segment from cutting through thin walls
+                        // when both endpoint grid nodes happen to be outside the obstacle bbox.
+                        if (IsSegmentBlocked(current.Center, neighbor.Center, obstacles, start, end))
+                            continue;
+
                         double movementCost = GridSize;
 
-                        // Strongly prefer staying on the same elevation.
-                        if (neighbor.Z != current.Z)
-                            movementCost += ZMovePenalty;
-
-                        // Penalize turns to avoid zig-zag path.
                         if (current.Parent != null)
                         {
                             int dx1 = current.X - current.Parent.X;
@@ -133,10 +139,6 @@ namespace MEPAutoRouting.Core
                                 movementCost += TurnPenalty;
                         }
 
-                        // Small bias towards routing volume center, useful for corridor-like routing volumes.
-                        if (_routingBounds != null)
-                            movementCost += GetCenterBiasCost(neighbor.Center, box);
-
                         double tentativeG = current.GCost + movementCost;
 
                         if (tentativeG < neighbor.GCost)
@@ -150,8 +152,8 @@ namespace MEPAutoRouting.Core
                 }
 
                 TaskDialog.Show(
-                    "A* Debug",
-                    "A* could not find a path. Fallback to L-shape." +
+                    "A* RouteFix",
+                    "A* could not find a valid path. Fallback to L-shape." +
                     Environment.NewLine + "RoutingBounds: " + (_routingBounds != null) +
                     Environment.NewLine + "Obstacles: " + obstacles.Count);
 
@@ -159,7 +161,7 @@ namespace MEPAutoRouting.Core
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("A* Error", ex.ToString());
+                TaskDialog.Show("A* RouteFix Error", ex.ToString());
                 return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
             }
         }
@@ -178,15 +180,19 @@ namespace MEPAutoRouting.Core
             {
                 double margin = GridSize * MarginCells;
 
+                // Fixed-Z routing: keep search Z around start/end level only.
+                double zMin = Math.Min(start.Z, end.Z) - GridSize;
+                double zMax = Math.Max(start.Z, end.Z) + GridSize;
+
                 min = new XYZ(
                     Math.Min(start.X, end.X) - margin,
                     Math.Min(start.Y, end.Y) - margin,
-                    Math.Min(start.Z, end.Z) - margin);
+                    zMin);
 
                 max = new XYZ(
                     Math.Max(start.X, end.X) + margin,
                     Math.Max(start.Y, end.Y) + margin,
-                    Math.Max(start.Z, end.Z) + margin);
+                    zMax);
             }
 
             return new SearchBox(min, max);
@@ -197,14 +203,12 @@ namespace MEPAutoRouting.Core
             GeometryExtractor extractor = new GeometryExtractor(_doc);
             List<BoundingBoxXYZ> obstacles = new List<BoundingBoxXYZ>();
 
-            // For routing inside a Room/Space/Mass volume, do NOT include Floors/Ceilings by default,
-            // otherwise the selected volume may be fully blocked vertically.
             AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_Walls);
             AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_Columns);
             AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_StructuralColumns);
             AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_StructuralFraming);
 
-            // Enable these later only if performance is acceptable.
+            // Keep MEP obstacles off for now. Enable later after wall avoidance is stable.
             // AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_DuctCurves);
             // AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_PipeCurves);
             // AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_CableTray);
@@ -237,7 +241,9 @@ namespace MEPAutoRouting.Core
         {
             int x = (int)Math.Round((point.X - box.Min.X) / GridSize);
             int y = (int)Math.Round((point.Y - box.Min.Y) / GridSize);
-            int z = (int)Math.Round((point.Z - box.Min.Z) / GridSize);
+
+            // Fixed-Z routing: snap all nodes to the start Z grid layer.
+            int z = (int)Math.Round((start.Z - box.Min.Z) / GridSize);
 
             string id = GetNodeId(x, y, z);
 
@@ -267,22 +273,20 @@ namespace MEPAutoRouting.Core
         {
             List<AStarNode> neighbors = new List<AStarNode>();
 
-            // XY directions first. Z directions are available but expensive.
+            // Fixed-Z: only XY movement. This creates pipe-friendly horizontal routing.
             int[,] dirs = new int[,]
             {
                 {  1,  0,  0 },
                 { -1,  0,  0 },
                 {  0,  1,  0 },
-                {  0, -1,  0 },
-                {  0,  0,  1 },
-                {  0,  0, -1 }
+                {  0, -1,  0 }
             };
 
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < 4; i++)
             {
                 int nx = node.X + dirs[i, 0];
                 int ny = node.Y + dirs[i, 1];
-                int nz = node.Z + dirs[i, 2];
+                int nz = node.Z;
 
                 XYZ center = new XYZ(
                     box.Min.X + nx * GridSize,
@@ -335,6 +339,30 @@ namespace MEPAutoRouting.Core
             return false;
         }
 
+        private bool IsSegmentBlocked(XYZ p1, XYZ p2, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
+        {
+            if (p1 == null || p2 == null)
+                return true;
+
+            double length = p1.DistanceTo(p2);
+            if (length < 1e-9)
+                return false;
+
+            double step = GridSize * SegmentSampleStepFactor;
+            int sampleCount = Math.Max(2, (int)Math.Ceiling(length / step));
+
+            for (int i = 0; i <= sampleCount; i++)
+            {
+                double t = (double)i / (double)sampleCount;
+                XYZ p = p1 + (p2 - p1) * t;
+
+                if (CheckIfObstacle(p, obstacles, start, end))
+                    return true;
+            }
+
+            return false;
+        }
+
         private bool IsInsideBox(XYZ point, XYZ min, XYZ max)
         {
             if (point == null || min == null || max == null)
@@ -343,17 +371,6 @@ namespace MEPAutoRouting.Core
             return point.X >= min.X && point.X <= max.X &&
                    point.Y >= min.Y && point.Y <= max.Y &&
                    point.Z >= min.Z && point.Z <= max.Z;
-        }
-
-        private double GetCenterBiasCost(XYZ point, SearchBox box)
-        {
-            XYZ center = new XYZ(
-                (box.Min.X + box.Max.X) / 2.0,
-                (box.Min.Y + box.Max.Y) / 2.0,
-                point.Z);
-
-            // Small cost only. This helps avoid hugging wall/edge of routing volume.
-            return point.DistanceTo(center) * CenterBiasFactor;
         }
 
         private List<XYZ> RetracePath(AStarNode startNode, AStarNode endNode, XYZ realStart, XYZ realEnd)
@@ -400,18 +417,35 @@ namespace MEPAutoRouting.Core
                 XYZ d1 = v1.Normalize();
                 XYZ d2 = v2.Normalize();
 
+                // Keep only direction-change points.
                 if (d1.DistanceTo(d2) > 0.01)
                     result.Add(current);
             }
 
             result.Add(path[path.Count - 1]);
-            return result;
+            return RemoveVeryShortSegments(result);
+        }
+
+        private List<XYZ> RemoveVeryShortSegments(List<XYZ> path)
+        {
+            if (path == null || path.Count < 2)
+                return path;
+
+            List<XYZ> cleaned = new List<XYZ>();
+            cleaned.Add(path[0]);
+
+            for (int i = 1; i < path.Count; i++)
+            {
+                if (cleaned[cleaned.Count - 1].DistanceTo(path[i]) >= 0.05)
+                    cleaned.Add(path[i]);
+            }
+
+            return cleaned;
         }
 
         private double GetHeuristic(XYZ a, XYZ b)
         {
-            // Manhattan works better for orthogonal routing.
-            return Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) + Math.Abs(a.Z - b.Z) * 2.0;
+            return Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
         }
 
         private string GetNodeId(int x, int y, int z)
@@ -512,6 +546,7 @@ namespace MEPAutoRouting.Core
             while (index > 0)
             {
                 int parent = (index - 1) / 2;
+
                 if (_items[parent].Priority <= _items[index].Priority)
                     break;
 

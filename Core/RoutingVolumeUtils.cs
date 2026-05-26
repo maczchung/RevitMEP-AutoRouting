@@ -48,7 +48,6 @@ namespace MEPAutoRouting.Core
             return bb;
         }
 
-        // Backward-compatible alias. It only returns Host element bounds.
         public static BoundingBoxXYZ GetElementBounds(Document doc, Element elem)
         {
             return GetHostElementBounds(doc, elem);
