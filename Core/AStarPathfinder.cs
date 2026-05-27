@@ -6,30 +6,22 @@ using Autodesk.Revit.UI;
 namespace MEPAutoRouting.Core
 {
     /// <summary>
-    /// A* RouteFix version for corridor / routing-volume based MEP routing.
-    ///
-    /// Main fixes:
-    /// - Fixed-Z routing by default to avoid unnecessary up/down movement.
-    /// - Segment collision check to reduce pipe crossing thin walls/partitions.
-    /// - Stronger obstacle tolerance to keep clearance from walls.
-    /// - Reduced zig-zag by stronger turn penalty.
-    /// - Optional routing bounds support from Room / Space / Mass / Generic Model.
-    ///
-    /// Revit internal units are feet.
+    /// RouteDebug NoFallback version.
+    /// If A* cannot find an obstacle-free path, this version returns an empty path instead of fallback L-shape.
+    /// This prevents creating a pipe that visually cuts through walls/partitions.
     /// </summary>
     public class AStarPathfinder
     {
         private readonly Document _doc;
         private readonly BoundingBoxXYZ _routingBounds;
 
-        // === Tuning parameters ===
-        private const double GridSize = 1.0;                 // 1 ft grid, better than 2 ft for corridor routing.
-        private const int MarginCells = 8;                   // Used only when no routing volume is provided.
-        private const int MaxIterations = 120000;            // Fail-safe to avoid Revit freeze.
-        private const double TurnPenalty = 12.0;             // Strongly reduce zig-zag.
-        private const double ObstacleToleranceFactor = 0.80; // Enlarge wall/partition obstruction.
-        private const double EscapeZoneCells = 1.5;          // Allow start/end connectors to escape nearby equipment.
-        private const double SegmentSampleStepFactor = 0.50; // Segment collision sample spacing = GridSize * factor.
+        private const double GridSize = 1.0;                 // feet
+        private const int MarginCells = 8;
+        private const int MaxIterations = 150000;
+        private const double TurnPenalty = 12.0;
+        private const double ObstacleToleranceFactor = 0.75;
+        private const double EscapeZoneCells = 1.25;
+        private const double SegmentSampleStepFactor = 0.35;
 
         public AStarPathfinder(Document doc)
         {
@@ -46,10 +38,10 @@ namespace MEPAutoRouting.Core
         public List<XYZ> FindPath(XYZ start, XYZ end)
         {
             if (start == null || end == null)
-                return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
+                return new List<XYZ>();
 
             if (start.DistanceTo(end) < 0.001)
-                return new List<XYZ> { start, end };
+                return new List<XYZ>();
 
             try
             {
@@ -59,12 +51,12 @@ namespace MEPAutoRouting.Core
                 {
                     if (!IsInsideBox(start, box.Min, box.Max) || !IsInsideBox(end, box.Min, box.Max))
                     {
-                        TaskDialog.Show("A* RouteFix", "Start or End is outside routing volume. Fallback to L-shape.");
-                        return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
+                        TaskDialog.Show("A* Route Debug", "Start or End is outside routing volume. No pipe was created.");
+                        return new List<XYZ>();
                     }
                 }
 
-                List<BoundingBoxXYZ> obstacles = GetObstacleBoxes();
+                List<BoundingBoxXYZ> obstacles = GetObstacleBoxes(box);
 
                 Dictionary<string, AStarNode> grid = new Dictionary<string, AStarNode>();
 
@@ -78,7 +70,6 @@ namespace MEPAutoRouting.Core
 
                 MinHeap<AStarNode> openHeap = new MinHeap<AStarNode>();
                 HashSet<string> closedSet = new HashSet<string>();
-
                 openHeap.Push(startNode, startNode.FCost);
 
                 int iterations = 0;
@@ -86,29 +77,38 @@ namespace MEPAutoRouting.Core
                 while (openHeap.Count > 0)
                 {
                     iterations++;
-
                     if (iterations > MaxIterations)
                     {
                         TaskDialog.Show(
-                            "A* RouteFix",
-                            "A* reached max iterations. Fallback to L-shape." +
+                            "A* Route Debug",
+                            "A* reached max iterations. No fallback pipe was created." +
                             Environment.NewLine + "Iterations: " + iterations +
                             Environment.NewLine + "GridSize(ft): " + GridSize +
                             Environment.NewLine + "RoutingBounds: " + (_routingBounds != null) +
-                            Environment.NewLine + "Obstacles: " + obstacles.Count);
+                            Environment.NewLine + "Obstacle boxes: " + obstacles.Count);
 
-                        return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
+                        return new List<XYZ>();
                     }
 
                     AStarNode current = openHeap.Pop();
-
                     if (closedSet.Contains(current.Id))
                         continue;
 
                     if (current.X == endNode.X && current.Y == endNode.Y && current.Z == endNode.Z)
                     {
                         List<XYZ> result = RetracePath(startNode, current, start, end);
-                        return SimplifyPath(result);
+                        result = SimplifyPath(result);
+
+                        if (PathHitsObstacle(result, obstacles, start, end))
+                        {
+                            TaskDialog.Show(
+                                "A* Route Debug",
+                                "A* found a path but final path still intersects an obstacle. No pipe was created." +
+                                Environment.NewLine + "Obstacle boxes: " + obstacles.Count);
+                            return new List<XYZ>();
+                        }
+
+                        return result;
                     }
 
                     closedSet.Add(current.Id);
@@ -118,8 +118,6 @@ namespace MEPAutoRouting.Core
                         if (neighbor.IsObstacle || closedSet.Contains(neighbor.Id))
                             continue;
 
-                        // Additional segment collision test. This prevents a segment from cutting through thin walls
-                        // when both endpoint grid nodes happen to be outside the obstacle bbox.
                         if (IsSegmentBlocked(current.Center, neighbor.Center, obstacles, start, end))
                             continue;
 
@@ -152,17 +150,17 @@ namespace MEPAutoRouting.Core
                 }
 
                 TaskDialog.Show(
-                    "A* RouteFix",
-                    "A* could not find a valid path. Fallback to L-shape." +
+                    "A* Route Debug",
+                    "A* could not find a valid obstacle-free path. No fallback pipe was created." +
                     Environment.NewLine + "RoutingBounds: " + (_routingBounds != null) +
-                    Environment.NewLine + "Obstacles: " + obstacles.Count);
+                    Environment.NewLine + "Obstacle boxes: " + obstacles.Count);
 
-                return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
+                return new List<XYZ>();
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("A* RouteFix Error", ex.ToString());
-                return MEPAutoRouting.Shared.SimplePath.GenerateLShape(start, end);
+                TaskDialog.Show("A* Route Debug Error", ex.ToString());
+                return new List<XYZ>();
             }
         }
 
@@ -179,42 +177,37 @@ namespace MEPAutoRouting.Core
             else
             {
                 double margin = GridSize * MarginCells;
-
-                // Fixed-Z routing: keep search Z around start/end level only.
                 double zMin = Math.Min(start.Z, end.Z) - GridSize;
                 double zMax = Math.Max(start.Z, end.Z) + GridSize;
 
-                min = new XYZ(
-                    Math.Min(start.X, end.X) - margin,
-                    Math.Min(start.Y, end.Y) - margin,
-                    zMin);
-
-                max = new XYZ(
-                    Math.Max(start.X, end.X) + margin,
-                    Math.Max(start.Y, end.Y) + margin,
-                    zMax);
+                min = new XYZ(Math.Min(start.X, end.X) - margin, Math.Min(start.Y, end.Y) - margin, zMin);
+                max = new XYZ(Math.Max(start.X, end.X) + margin, Math.Max(start.Y, end.Y) + margin, zMax);
             }
 
             return new SearchBox(min, max);
         }
 
-        private List<BoundingBoxXYZ> GetObstacleBoxes()
+        private List<BoundingBoxXYZ> GetObstacleBoxes(SearchBox box)
         {
             GeometryExtractor extractor = new GeometryExtractor(_doc);
-            List<BoundingBoxXYZ> obstacles = new List<BoundingBoxXYZ>();
+            List<BoundingBoxXYZ> all = new List<BoundingBoxXYZ>();
 
-            AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_Walls);
-            AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_Columns);
-            AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_StructuralColumns);
-            AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_StructuralFraming);
+            AddBoxesSafe(all, extractor, BuiltInCategory.OST_Walls);
+            AddBoxesSafe(all, extractor, BuiltInCategory.OST_Columns);
+            AddBoxesSafe(all, extractor, BuiltInCategory.OST_StructuralColumns);
+            AddBoxesSafe(all, extractor, BuiltInCategory.OST_StructuralFraming);
 
-            // Keep MEP obstacles off for now. Enable later after wall avoidance is stable.
-            // AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_DuctCurves);
-            // AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_PipeCurves);
-            // AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_CableTray);
-            // AddBoxesSafe(obstacles, extractor, BuiltInCategory.OST_Conduit);
+            List<BoundingBoxXYZ> filtered = new List<BoundingBoxXYZ>();
+            foreach (BoundingBoxXYZ bb in all)
+            {
+                if (bb == null)
+                    continue;
 
-            return obstacles;
+                if (BoxesOverlap(bb, box.Min, box.Max))
+                    filtered.Add(bb);
+            }
+
+            return filtered;
         }
 
         private void AddBoxesSafe(List<BoundingBoxXYZ> boxes, GeometryExtractor extractor, BuiltInCategory category)
@@ -231,18 +224,18 @@ namespace MEPAutoRouting.Core
             }
         }
 
-        private AStarNode GetOrCreateNode(
-            Dictionary<string, AStarNode> grid,
-            XYZ point,
-            SearchBox box,
-            List<BoundingBoxXYZ> obstacles,
-            XYZ start,
-            XYZ end)
+        private bool BoxesOverlap(BoundingBoxXYZ bb, XYZ min, XYZ max)
+        {
+            if (bb.Max.X < min.X || bb.Min.X > max.X) return false;
+            if (bb.Max.Y < min.Y || bb.Min.Y > max.Y) return false;
+            if (bb.Max.Z < min.Z || bb.Min.Z > max.Z) return false;
+            return true;
+        }
+
+        private AStarNode GetOrCreateNode(Dictionary<string, AStarNode> grid, XYZ point, SearchBox box, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
             int x = (int)Math.Round((point.X - box.Min.X) / GridSize);
             int y = (int)Math.Round((point.Y - box.Min.Y) / GridSize);
-
-            // Fixed-Z routing: snap all nodes to the start Z grid layer.
             int z = (int)Math.Round((start.Z - box.Min.Z) / GridSize);
 
             string id = GetNodeId(x, y, z);
@@ -251,35 +244,24 @@ namespace MEPAutoRouting.Core
             if (grid.TryGetValue(id, out existing))
                 return existing;
 
-            XYZ center = new XYZ(
-                box.Min.X + x * GridSize,
-                box.Min.Y + y * GridSize,
-                box.Min.Z + z * GridSize);
+            XYZ center = new XYZ(box.Min.X + x * GridSize, box.Min.Y + y * GridSize, box.Min.Z + z * GridSize);
 
             AStarNode node = new AStarNode(x, y, z, center, id);
             node.IsObstacle = !IsInsideBox(center, box.Min, box.Max) || CheckIfObstacle(center, obstacles, start, end);
-
             grid[id] = node;
             return node;
         }
 
-        private List<AStarNode> GetNeighbors(
-            AStarNode node,
-            Dictionary<string, AStarNode> grid,
-            SearchBox box,
-            List<BoundingBoxXYZ> obstacles,
-            XYZ start,
-            XYZ end)
+        private List<AStarNode> GetNeighbors(AStarNode node, Dictionary<string, AStarNode> grid, SearchBox box, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
             List<AStarNode> neighbors = new List<AStarNode>();
 
-            // Fixed-Z: only XY movement. This creates pipe-friendly horizontal routing.
             int[,] dirs = new int[,]
             {
-                {  1,  0,  0 },
-                { -1,  0,  0 },
-                {  0,  1,  0 },
-                {  0, -1,  0 }
+                { 1, 0, 0 },
+                { -1, 0, 0 },
+                { 0, 1, 0 },
+                { 0, -1, 0 }
             };
 
             for (int i = 0; i < 4; i++)
@@ -288,10 +270,7 @@ namespace MEPAutoRouting.Core
                 int ny = node.Y + dirs[i, 1];
                 int nz = node.Z;
 
-                XYZ center = new XYZ(
-                    box.Min.X + nx * GridSize,
-                    box.Min.Y + ny * GridSize,
-                    box.Min.Z + nz * GridSize);
+                XYZ center = new XYZ(box.Min.X + nx * GridSize, box.Min.Y + ny * GridSize, box.Min.Z + nz * GridSize);
 
                 if (!IsInsideBox(center, box.Min, box.Max))
                     continue;
@@ -314,8 +293,7 @@ namespace MEPAutoRouting.Core
 
         private bool CheckIfObstacle(XYZ point, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
-            if (point.DistanceTo(start) < GridSize * EscapeZoneCells ||
-                point.DistanceTo(end) < GridSize * EscapeZoneCells)
+            if (point.DistanceTo(start) < GridSize * EscapeZoneCells || point.DistanceTo(end) < GridSize * EscapeZoneCells)
                 return false;
 
             double tolerance = GridSize * ObstacleToleranceFactor;
@@ -325,15 +303,10 @@ namespace MEPAutoRouting.Core
                 if (bb == null)
                     continue;
 
-                if (point.X >= bb.Min.X - tolerance &&
-                    point.X <= bb.Max.X + tolerance &&
-                    point.Y >= bb.Min.Y - tolerance &&
-                    point.Y <= bb.Max.Y + tolerance &&
-                    point.Z >= bb.Min.Z - tolerance &&
-                    point.Z <= bb.Max.Z + tolerance)
-                {
+                if (point.X >= bb.Min.X - tolerance && point.X <= bb.Max.X + tolerance &&
+                    point.Y >= bb.Min.Y - tolerance && point.Y <= bb.Max.Y + tolerance &&
+                    point.Z >= bb.Min.Z - tolerance && point.Z <= bb.Max.Z + tolerance)
                     return true;
-                }
             }
 
             return false;
@@ -348,8 +321,8 @@ namespace MEPAutoRouting.Core
             if (length < 1e-9)
                 return false;
 
-            double step = GridSize * SegmentSampleStepFactor;
-            int sampleCount = Math.Max(2, (int)Math.Ceiling(length / step));
+            double step = GridSize * 0.25;
+            int sampleCount = Math.Max(4, (int)Math.Ceiling(length / step));
 
             for (int i = 0; i <= sampleCount; i++)
             {
@@ -363,14 +336,26 @@ namespace MEPAutoRouting.Core
             return false;
         }
 
+        private bool PathHitsObstacle(List<XYZ> path, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
+        {
+            if (path == null || path.Count < 2)
+                return true;
+
+            for (int i = 0; i < path.Count - 1; i++)
+            {
+                if (IsSegmentBlocked(path[i], path[i + 1], obstacles, start, end))
+                    return true;
+            }
+
+            return false;
+        }
+
         private bool IsInsideBox(XYZ point, XYZ min, XYZ max)
         {
             if (point == null || min == null || max == null)
                 return false;
 
-            return point.X >= min.X && point.X <= max.X &&
-                   point.Y >= min.Y && point.Y <= max.Y &&
-                   point.Z >= min.Z && point.Z <= max.Z;
+            return point.X >= min.X && point.X <= max.X && point.Y >= min.Y && point.Y <= max.Y && point.Z >= min.Z && point.Z <= max.Z;
         }
 
         private List<XYZ> RetracePath(AStarNode startNode, AStarNode endNode, XYZ realStart, XYZ realEnd)
@@ -390,7 +375,6 @@ namespace MEPAutoRouting.Core
             finalPath.Add(realStart);
             finalPath.AddRange(path);
             finalPath.Add(realEnd);
-
             return finalPath;
         }
 
@@ -417,7 +401,6 @@ namespace MEPAutoRouting.Core
                 XYZ d1 = v1.Normalize();
                 XYZ d2 = v2.Normalize();
 
-                // Keep only direction-change points.
                 if (d1.DistanceTo(d2) > 0.01)
                     result.Add(current);
             }
@@ -471,10 +454,8 @@ namespace MEPAutoRouting.Core
         public int X { get; private set; }
         public int Y { get; private set; }
         public int Z { get; private set; }
-
         public XYZ Center { get; private set; }
         public string Id { get; private set; }
-
         public bool IsObstacle { get; set; }
         public double GCost { get; set; }
         public double HCost { get; set; }
@@ -553,7 +534,6 @@ namespace MEPAutoRouting.Core
                 HeapNode temp = _items[parent];
                 _items[parent] = _items[index];
                 _items[index] = temp;
-
                 index = parent;
             }
         }
@@ -580,7 +560,6 @@ namespace MEPAutoRouting.Core
                 HeapNode temp = _items[index];
                 _items[index] = _items[smallest];
                 _items[smallest] = temp;
-
                 index = smallest;
             }
         }
