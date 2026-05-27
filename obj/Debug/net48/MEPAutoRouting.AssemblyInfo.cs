@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MEPAutoRouting")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+11da533f1c285c8fd7fa01791d6571c477a49208")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+41ced2d4eee853ab0b4a1af6ec947e0e0937b888")]
 [assembly: System.Reflection.AssemblyProductAttribute("MEPAutoRouting")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MEPAutoRouting")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
