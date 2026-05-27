@@ -9,5 +9,6 @@ L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.GeneratedMSBuild
 L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.AssemblyInfoInputs.cache
 L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.AssemblyInfo.cs
 L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.csproj.CoreCompileInputs.cache
+L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.sourcelink.json
 L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.dll
 L:\m.kwok\VS code\MEPAutoRouting\obj\Debug\net48\MEPAutoRouting.pdb
