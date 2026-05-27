@@ -172,14 +172,24 @@ namespace MEPAutoRouting
 
                 if (CurrentMode == RoutingMode.Pipe)
                 {
-                    PipeRoutingEngine engine = new PipeRoutingEngine(doc, routingBounds);
-                    List<XYZ> path = engine.GeneratePath(startPoint, endPoint);
+                    AStarPathfinder finder = new AStarPathfinder(doc, routingBounds);
+
+                    XYZ startDir = XYZ.BasisX;
+                    if (startConnector != null && startConnector.CoordinateSystem != null)
+                        startDir = startConnector.CoordinateSystem.BasisZ;
+
+                    List<XYZ> path = finder.FindPath(startPoint, endPoint, startDir);
                     CreatePipe(doc, path, startConnector, endConnector, selectedPipeTypeId, selectedPipeDiameterMm);
                 }
                 else
                 {
-                    ConduitRoutingEngine engine = new ConduitRoutingEngine(doc, routingBounds);
-                    List<XYZ> path = engine.GeneratePath(startPoint, endPoint);
+                    AStarPathfinder finder = new AStarPathfinder(doc, routingBounds);
+
+                    XYZ startDir = XYZ.BasisX;
+                    if (startConnector != null && startConnector.CoordinateSystem != null)
+                        startDir = startConnector.CoordinateSystem.BasisZ;
+
+                    List<XYZ> path = finder.FindPath(startPoint, endPoint, startDir);
                     ConduitCreator creator = new ConduitCreator(doc);
                     creator.Create(path);
                     TaskDialog.Show("Routing Success", "Conduit routing completed." + Environment.NewLine + "Points: " + (path == null ? 0 : path.Count));
@@ -230,6 +240,13 @@ namespace MEPAutoRouting
                 return;
             }
 
+            path = PreparePathForConnectorConnection(path, startConnector, endConnector);
+            if (path == null || path.Count < 2)
+            {
+                TaskDialog.Show("Pipe Debug", "Prepared path is null or has less than 2 points.");
+                return;
+            }
+
             ElementId levelId = ElementId.InvalidElementId;
             ViewPlan activePlan = doc.ActiveView as ViewPlan;
             if (activePlan != null && activePlan.GenLevel != null)
@@ -251,9 +268,10 @@ namespace MEPAutoRouting
 
             int createdPipeCount = 0;
             int createdFittingCount = 0;
+            int connectedEndCount = 0;
             List<SegmentInfo> segments = new List<SegmentInfo>();
 
-            using (Transaction transaction = new Transaction(doc, "Pipe Routing With Fittings"))
+            using (Transaction transaction = new Transaction(doc, "Pipe Routing With Connector Fix"))
             {
                 transaction.Start();
 
@@ -282,14 +300,18 @@ namespace MEPAutoRouting
                     }
                 }
 
+                // Important: regenerate before reading pipe connector positions.
+                doc.Regenerate();
+
+                // Connect adjacent pipe segments by elbow/union/direct connection.
                 for (int i = 0; i < segments.Count - 1; i++)
                 {
                     SegmentInfo a = segments[i];
                     SegmentInfo b = segments[i + 1];
                     XYZ jointPoint = a.End;
 
-                    Connector ca = GetClosestConnector(a.Pipe, jointPoint);
-                    Connector cb = GetClosestConnector(b.Pipe, jointPoint);
+                    Connector ca = GetClosestUnusedConnector(a.Pipe, jointPoint);
+                    Connector cb = GetClosestUnusedConnector(b.Pipe, jointPoint);
 
                     if (ca == null || cb == null)
                         continue;
@@ -299,10 +321,15 @@ namespace MEPAutoRouting
                         createdFittingCount++;
                 }
 
+                doc.Regenerate();
+
                 if (segments.Count > 0)
                 {
-                    TryConnectPipeEnd(segments[0].Pipe, path[0], startConnector);
-                    TryConnectPipeEnd(segments[segments.Count - 1].Pipe, path[path.Count - 1], endConnector);
+                    if (TryConnectPipeEnd(segments[0].Pipe, path[0], startConnector))
+                        connectedEndCount++;
+
+                    if (TryConnectPipeEnd(segments[segments.Count - 1].Pipe, path[path.Count - 1], endConnector))
+                        connectedEndCount++;
                 }
 
                 transaction.Commit();
@@ -314,7 +341,44 @@ namespace MEPAutoRouting
                 Environment.NewLine + "Path points: " + path.Count +
                 Environment.NewLine + "Created pipes: " + createdPipeCount +
                 Environment.NewLine + "Created fittings/connections: " + createdFittingCount +
+                Environment.NewLine + "Connected equipment ends: " + connectedEndCount + " / 2" +
                 Environment.NewLine + "Pipe size(mm): " + selectedPipeDiameterMm);
+        }
+
+        private List<XYZ> PreparePathForConnectorConnection(List<XYZ> originalPath, Connector startConnector, Connector endConnector)
+        {
+            List<XYZ> path = new List<XYZ>();
+
+            foreach (XYZ p in originalPath)
+            {
+                if (p == null)
+                    continue;
+
+                if (path.Count == 0 || path[path.Count - 1].DistanceTo(p) > 0.001)
+                    path.Add(p);
+            }
+
+            if (path.Count < 2)
+                return path;
+
+            // Force exact endpoint coordinate to selected connector origins.
+            if (startConnector != null)
+                path[0] = startConnector.Origin;
+
+            if (endConnector != null)
+                path[path.Count - 1] = endConnector.Origin;
+
+            // Remove duplicated or ultra-short segments after endpoint snapping.
+            List<XYZ> cleaned = new List<XYZ>();
+            cleaned.Add(path[0]);
+
+            for (int i = 1; i < path.Count; i++)
+            {
+                if (cleaned[cleaned.Count - 1].DistanceTo(path[i]) > 0.01)
+                    cleaned.Add(path[i]);
+            }
+
+            return cleaned;
         }
 
         private class SegmentInfo
@@ -383,7 +447,7 @@ namespace MEPAutoRouting
             return false;
         }
 
-        private Connector GetClosestConnector(Autodesk.Revit.DB.Plumbing.Pipe pipe, XYZ point)
+        private Connector GetClosestUnusedConnector(Autodesk.Revit.DB.Plumbing.Pipe pipe, XYZ point)
         {
             if (pipe == null || point == null)
                 return null;
@@ -393,6 +457,12 @@ namespace MEPAutoRouting
 
             foreach (Connector connector in pipe.ConnectorManager.Connectors)
             {
+                if (connector == null)
+                    continue;
+
+                if (connector.IsConnected)
+                    continue;
+
                 double distance = connector.Origin.DistanceTo(point);
 
                 if (distance < bestDistance)
@@ -405,29 +475,63 @@ namespace MEPAutoRouting
             return best;
         }
 
-        private void TryConnectPipeEnd(Autodesk.Revit.DB.Plumbing.Pipe pipe, XYZ point, Connector targetConnector)
+        private Connector GetClosestConnector(Autodesk.Revit.DB.Plumbing.Pipe pipe, XYZ point)
+        {
+            if (pipe == null || point == null)
+                return null;
+
+            Connector best = null;
+            double bestDistance = double.MaxValue;
+
+            foreach (Connector connector in pipe.ConnectorManager.Connectors)
+            {
+                if (connector == null)
+                    continue;
+
+                double distance = connector.Origin.DistanceTo(point);
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = connector;
+                }
+            }
+
+            return best;
+        }
+
+        private bool TryConnectPipeEnd(Autodesk.Revit.DB.Plumbing.Pipe pipe, XYZ point, Connector targetConnector)
         {
             if (pipe == null || point == null || targetConnector == null)
-                return;
+                return false;
 
-            Connector bestPipeConnector = GetClosestConnector(pipe, point);
+            Connector bestPipeConnector = GetClosestUnusedConnector(pipe, point);
+            if (bestPipeConnector == null)
+                bestPipeConnector = GetClosestConnector(pipe, point);
 
             if (bestPipeConnector == null)
-                return;
+                return false;
 
-            double tolerance = UnitUtils.ConvertToInternalUnits(5.0, UnitTypeId.Millimeters);
+            // Endpoint should be exact after PreparePathForConnectorConnection, but allow larger tolerance for Revit connector rounding.
+            double tolerance = UnitUtils.ConvertToInternalUnits(80.0, UnitTypeId.Millimeters);
+            double distance = bestPipeConnector.Origin.DistanceTo(targetConnector.Origin);
 
-            if (bestPipeConnector.Origin.DistanceTo(targetConnector.Origin) > tolerance)
-                return;
+            if (distance > tolerance)
+                return false;
 
             try
             {
                 if (!bestPipeConnector.IsConnectedTo(targetConnector))
+                {
                     bestPipeConnector.ConnectTo(targetConnector);
+                    return true;
+                }
+
+                return true;
             }
             catch
             {
-                // Ignore connection failure. Pipe geometry is still created.
+                return false;
             }
         }
     }
