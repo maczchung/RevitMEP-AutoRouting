@@ -6,22 +6,26 @@ using Autodesk.Revit.UI;
 namespace MEPAutoRouting.Core
 {
     /// <summary>
-    /// RouteDebug NoFallback version.
-    /// If A* cannot find an obstacle-free path, this version returns an empty path instead of fallback L-shape.
-    /// This prevents creating a pipe that visually cuts through walls/partitions.
+    /// GapFix A* pathfinder.
+    /// Purpose:
+    /// - Keep route inside Host routing volume.
+    /// - Fixed Z / horizontal routing.
+    /// - Avoid wall/partition obstacles.
+    /// - Use smaller grid and smaller obstacle expansion so the algorithm can pass through real gaps.
+    /// - No fallback L-shape. If A* fails, no wrong straight pipe will be created.
     /// </summary>
     public class AStarPathfinder
     {
         private readonly Document _doc;
         private readonly BoundingBoxXYZ _routingBounds;
 
-        private const double GridSize = 1.0;                 // feet
-        private const int MarginCells = 8;
-        private const int MaxIterations = 150000;
-        private const double TurnPenalty = 12.0;
-        private const double ObstacleToleranceFactor = 0.75;
-        private const double EscapeZoneCells = 1.25;
-        private const double SegmentSampleStepFactor = 0.35;
+        private const double GridSize = 0.5;                 // 0.5 ft approx 152 mm. Better for narrow gaps.
+        private const int MarginCells = 12;
+        private const int MaxIterations = 250000;
+        private const double TurnPenalty = 8.0;
+        private const double ObstacleToleranceFactor = 0.20; // Lower than 0.75 so gaps do not get closed.
+        private const double EscapeZoneCells = 1.0;
+        private const double SegmentSampleStepFactor = 0.50;
 
         public AStarPathfinder(Document doc)
         {
@@ -51,7 +55,7 @@ namespace MEPAutoRouting.Core
                 {
                     if (!IsInsideBox(start, box.Min, box.Max) || !IsInsideBox(end, box.Min, box.Max))
                     {
-                        TaskDialog.Show("A* Route Debug", "Start or End is outside routing volume. No pipe was created.");
+                        TaskDialog.Show("A* GapFix", "Start or End is outside routing volume. No pipe was created.");
                         return new List<XYZ>();
                     }
                 }
@@ -59,7 +63,6 @@ namespace MEPAutoRouting.Core
                 List<BoundingBoxXYZ> obstacles = GetObstacleBoxes(box);
 
                 Dictionary<string, AStarNode> grid = new Dictionary<string, AStarNode>();
-
                 AStarNode startNode = GetOrCreateNode(grid, start, box, obstacles, start, end);
                 AStarNode endNode = GetOrCreateNode(grid, end, box, obstacles, start, end);
 
@@ -80,12 +83,13 @@ namespace MEPAutoRouting.Core
                     if (iterations > MaxIterations)
                     {
                         TaskDialog.Show(
-                            "A* Route Debug",
+                            "A* GapFix",
                             "A* reached max iterations. No fallback pipe was created." +
                             Environment.NewLine + "Iterations: " + iterations +
                             Environment.NewLine + "GridSize(ft): " + GridSize +
                             Environment.NewLine + "RoutingBounds: " + (_routingBounds != null) +
-                            Environment.NewLine + "Obstacle boxes: " + obstacles.Count);
+                            Environment.NewLine + "Obstacle boxes: " + obstacles.Count +
+                            Environment.NewLine + "Tip: reduce obstacles/tolerance or enlarge routing volume gap.");
 
                         return new List<XYZ>();
                     }
@@ -102,8 +106,8 @@ namespace MEPAutoRouting.Core
                         if (PathHitsObstacle(result, obstacles, start, end))
                         {
                             TaskDialog.Show(
-                                "A* Route Debug",
-                                "A* found a path but final path still intersects an obstacle. No pipe was created." +
+                                "A* GapFix",
+                                "A* found a path but final simplified path intersects an obstacle. No pipe was created." +
                                 Environment.NewLine + "Obstacle boxes: " + obstacles.Count);
                             return new List<XYZ>();
                         }
@@ -150,16 +154,17 @@ namespace MEPAutoRouting.Core
                 }
 
                 TaskDialog.Show(
-                    "A* Route Debug",
+                    "A* GapFix",
                     "A* could not find a valid obstacle-free path. No fallback pipe was created." +
                     Environment.NewLine + "RoutingBounds: " + (_routingBounds != null) +
-                    Environment.NewLine + "Obstacle boxes: " + obstacles.Count);
+                    Environment.NewLine + "Obstacle boxes: " + obstacles.Count +
+                    Environment.NewLine + "Likely cause: selected volume gaps are closed by obstacle tolerance or physical partition layout.");
 
                 return new List<XYZ>();
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("A* Route Debug Error", ex.ToString());
+                TaskDialog.Show("A* GapFix Error", ex.ToString());
                 return new List<XYZ>();
             }
         }
@@ -245,7 +250,6 @@ namespace MEPAutoRouting.Core
                 return existing;
 
             XYZ center = new XYZ(box.Min.X + x * GridSize, box.Min.Y + y * GridSize, box.Min.Z + z * GridSize);
-
             AStarNode node = new AStarNode(x, y, z, center, id);
             node.IsObstacle = !IsInsideBox(center, box.Min, box.Max) || CheckIfObstacle(center, obstacles, start, end);
             grid[id] = node;
@@ -293,7 +297,8 @@ namespace MEPAutoRouting.Core
 
         private bool CheckIfObstacle(XYZ point, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
-            if (point.DistanceTo(start) < GridSize * EscapeZoneCells || point.DistanceTo(end) < GridSize * EscapeZoneCells)
+            if (point.DistanceTo(start) < GridSize * EscapeZoneCells ||
+                point.DistanceTo(end) < GridSize * EscapeZoneCells)
                 return false;
 
             double tolerance = GridSize * ObstacleToleranceFactor;
