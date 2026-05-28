@@ -6,40 +6,33 @@ using Autodesk.Revit.UI;
 namespace MEPAutoRouting.Core
 {
     /// <summary>
-    /// Hybrid 3D + Volume Obstacle Filter A* pathfinder.
-    ///
-    /// Purpose:
-    /// - Keep the route inside selected Host Room / Space / Mass / Generic Model routing volume.
-    /// - Ignore long corridor boundary walls where possible.
-    /// - Keep internal partitions / columns as obstacles.
-    /// - Allow 3D movement only when needed, with high Z penalty.
-    /// - Keep orthogonal / fitting-friendly path.
-    /// - No fallback L-shape. If no valid path is found, returns empty path.
-    ///
-    /// Revit internal units are feet.
+    /// BetterRoute Horizontal A* pathfinder.
+    /// - 3D A* is allowed, but Z movement has a high penalty.
+    /// - Routing volume is the allowed space.
+    /// - Likely long corridor boundary walls are filtered out.
+    /// - Internal partitions / columns remain obstacles.
+    /// - Final path is rebuilt as axis-aligned horizontal / vertical segments only.
+    /// - No fallback L-shape. If no valid path is found, returns an empty path.
     /// </summary>
     public class AStarPathfinder
     {
         private readonly Document _doc;
         private readonly BoundingBoxXYZ _routingBounds;
 
-        // Grid / search settings
-        private const double GridSize = 0.5;                  // 0.5 ft ~= 152 mm
+        private const double GridSize = 0.5;                 // feet, approx. 152 mm
         private const int MarginCells = 12;
-        private const int MaxIterations = 350000;
+        private const int MaxIterations = 400000;
 
-        // Cost settings
-        private const double TurnPenalty = 10.0;              // reduce zig-zag
-        private const double ZMovePenalty = 140.0;            // allow 3D but avoid unless necessary
-        private const double ReversePenalty = 20.0;           // avoid immediate backtracking shape
-        private const double StartDirectionBonus = 0.15;      // small bias along connector direction
+        private const double TurnPenalty = 22.0;
+        private const double ZMovePenalty = 600.0;           // strongly keep horizontal
+        private const double ReversePenalty = 40.0;
+        private const double ContinueStraightBonus = 0.20;
+        private const double StartDirectionBonus = 0.15;
 
-        // Collision / obstacle settings
-        private const double ObstacleToleranceFactor = 0.10;  // keep corridor gaps open
-        private const double EscapeZoneCells = 2.5;           // larger safe zone around start/end equipment
+        private const double ObstacleToleranceFactor = 0.10;
+        private const double EscapeZoneCells = 2.5;
         private const double SegmentSampleFactor = 0.25;
 
-        // Obstacle filtering settings
         private const double MinOverlapRatioToKeep = 0.18;
         private const double LongBoundaryRatio = 0.55;
         private const double BoundaryNearToleranceFt = 0.75;
@@ -56,17 +49,11 @@ namespace MEPAutoRouting.Core
             _routingBounds = routingBounds;
         }
 
-        /// <summary>
-        /// Backward-compatible overload for existing PipeRoutingEngine / ConduitRoutingEngine.
-        /// </summary>
         public List<XYZ> FindPath(XYZ start, XYZ end)
         {
             return FindPath(start, end, XYZ.BasisX);
         }
 
-        /// <summary>
-        /// 3D A* path with optional start direction bias.
-        /// </summary>
         public List<XYZ> FindPath(XYZ start, XYZ end, XYZ startDir)
         {
             if (start == null || end == null)
@@ -83,20 +70,16 @@ namespace MEPAutoRouting.Core
                 {
                     if (!IsInsideRoutingVolume(start) || !IsInsideRoutingVolume(end))
                     {
-                        TaskDialog.Show(
-                            "A* Hybrid3D",
-                            "Start or End is outside the selected routing volume. No pipe was created.");
+                        TaskDialog.Show("A* BetterRoute-Horizontal", "Start or End is outside the selected routing volume. No pipe was created.");
                         return new List<XYZ>();
                     }
                 }
 
                 XYZ normalizedStartDir = NormalizeToMajorAxis(startDir);
-
                 ObstacleResult obstacleResult = GetFilteredObstacles(box);
                 List<BoundingBoxXYZ> obstacles = obstacleResult.UsedObstacles;
 
                 Dictionary<string, AStarNode> grid = new Dictionary<string, AStarNode>();
-
                 AStarNode startNode = GetOrCreateNode(grid, start, box, obstacles, start, end);
                 AStarNode endNode = GetOrCreateNode(grid, end, box, obstacles, start, end);
 
@@ -114,7 +97,6 @@ namespace MEPAutoRouting.Core
                 while (openHeap.Count > 0)
                 {
                     iterations++;
-
                     if (iterations > MaxIterations)
                     {
                         ShowFailureDebug("A* reached max iterations. No fallback pipe was created.", obstacleResult, iterations);
@@ -128,7 +110,7 @@ namespace MEPAutoRouting.Core
                     if (current.X == endNode.X && current.Y == endNode.Y && current.Z == endNode.Z)
                     {
                         List<XYZ> result = RetracePath(startNode, current, start, end);
-                        result = CleanOrthogonalPath(result);
+                        result = CleanAxisAlignedPath(result);
 
                         if (PathHitsObstacle(result, obstacles, start, end))
                         {
@@ -137,7 +119,7 @@ namespace MEPAutoRouting.Core
                         }
 
                         TaskDialog.Show(
-                            "A* Hybrid3D",
+                            "A* BetterRoute-Horizontal",
                             "Path found." +
                             Environment.NewLine + "Path points: " + result.Count +
                             Environment.NewLine + "Iterations: " + iterations +
@@ -174,22 +156,25 @@ namespace MEPAutoRouting.Core
                             int dy1 = current.Y - current.Parent.Y;
                             int dz1 = current.Z - current.Parent.Z;
 
-                            if (dx1 != dx2 || dy1 != dy2 || dz1 != dz2)
-                                movementCost += TurnPenalty;
+                            bool isTurn = dx1 != dx2 || dy1 != dy2 || dz1 != dz2;
+                            bool isReverse = dx1 == -dx2 && dy1 == -dy2 && dz1 == -dz2;
 
-                            if (dx1 == -dx2 && dy1 == -dy2 && dz1 == -dz2)
+                            if (isTurn)
+                                movementCost += TurnPenalty;
+                            else
+                                movementCost -= ContinueStraightBonus;
+
+                            if (isReverse)
                                 movementCost += ReversePenalty;
                         }
                         else
                         {
-                            // Small initial direction preference only on first step.
                             XYZ stepDir = new XYZ(dx2, dy2, dz2);
                             if (IsSameMajorAxis(stepDir, normalizedStartDir))
                                 movementCost -= StartDirectionBonus;
                         }
 
                         double tentativeG = current.GCost + movementCost;
-
                         if (tentativeG < neighbor.GCost)
                         {
                             neighbor.Parent = current;
@@ -205,7 +190,7 @@ namespace MEPAutoRouting.Core
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("A* Hybrid3D Error", ex.ToString());
+                TaskDialog.Show("A* BetterRoute-Horizontal Error", ex.ToString());
                 return new List<XYZ>();
             }
         }
@@ -213,7 +198,7 @@ namespace MEPAutoRouting.Core
         private void ShowFailureDebug(string title, ObstacleResult obstacleResult, int iterations)
         {
             TaskDialog.Show(
-                "A* Hybrid3D",
+                "A* BetterRoute-Horizontal",
                 title +
                 Environment.NewLine + "Iterations: " + iterations +
                 Environment.NewLine + "GridSize(ft): " + GridSize +
@@ -222,7 +207,7 @@ namespace MEPAutoRouting.Core
                 Environment.NewLine + "Used obstacle boxes: " + obstacleResult.UsedObstacles.Count +
                 Environment.NewLine + "Ignored boundary boxes: " + obstacleResult.IgnoredBoundaryCount +
                 Environment.NewLine + "Ignored low-overlap boxes: " + obstacleResult.IgnoredLowOverlapCount +
-                Environment.NewLine + "Tip: for a corridor case, Used obstacle boxes should normally be internal partitions only.");
+                Environment.NewLine + "Tip: if no path is found, lower ZMovePenalty or check routing volume height.");
         }
 
         private SearchBox BuildSearchBox(XYZ start, XYZ end)
@@ -232,7 +217,6 @@ namespace MEPAutoRouting.Core
 
             if (_routingBounds != null)
             {
-                // Search slightly outside, but actual walkable nodes are later restricted back to routing volume.
                 XYZ expand = new XYZ(GridSize * 2.0, GridSize * 2.0, GridSize * 2.0);
                 min = _routingBounds.Min - expand;
                 max = _routingBounds.Max + expand;
@@ -240,15 +224,8 @@ namespace MEPAutoRouting.Core
             else
             {
                 double margin = GridSize * MarginCells;
-                min = new XYZ(
-                    Math.Min(start.X, end.X) - margin,
-                    Math.Min(start.Y, end.Y) - margin,
-                    Math.Min(start.Z, end.Z) - margin);
-
-                max = new XYZ(
-                    Math.Max(start.X, end.X) + margin,
-                    Math.Max(start.Y, end.Y) + margin,
-                    Math.Max(start.Z, end.Z) + margin);
+                min = new XYZ(Math.Min(start.X, end.X) - margin, Math.Min(start.Y, end.Y) - margin, Math.Min(start.Z, end.Z) - margin);
+                max = new XYZ(Math.Max(start.X, end.X) + margin, Math.Max(start.Y, end.Y) + margin, Math.Max(start.Z, end.Z) + margin);
             }
 
             return new SearchBox(min, max);
@@ -281,7 +258,6 @@ namespace MEPAutoRouting.Core
                 if (_routingBounds != null)
                 {
                     double overlapRatio = GetXYOverlapRatioAgainstObstacle(bb, filterMin, filterMax);
-
                     if (overlapRatio < MinOverlapRatioToKeep)
                     {
                         result.IgnoredLowOverlapCount++;
@@ -307,15 +283,10 @@ namespace MEPAutoRouting.Core
             double ixMax = Math.Min(bb.Max.X, boxMax.X);
             double iyMin = Math.Max(bb.Min.Y, boxMin.Y);
             double iyMax = Math.Min(bb.Max.Y, boxMax.Y);
-
             double ix = Math.Max(0.0, ixMax - ixMin);
             double iy = Math.Max(0.0, iyMax - iyMin);
             double intersectionArea = ix * iy;
-
-            double obstacleArea = Math.Max(
-                0.000001,
-                Math.Abs(bb.Max.X - bb.Min.X) * Math.Abs(bb.Max.Y - bb.Min.Y));
-
+            double obstacleArea = Math.Max(0.000001, Math.Abs(bb.Max.X - bb.Min.X) * Math.Abs(bb.Max.Y - bb.Min.Y));
             return intersectionArea / obstacleArea;
         }
 
@@ -325,29 +296,11 @@ namespace MEPAutoRouting.Core
             double boxSpanY = Math.Abs(boxMax.Y - boxMin.Y);
             double bbSpanX = Math.Abs(bb.Max.X - bb.Min.X);
             double bbSpanY = Math.Abs(bb.Max.Y - bb.Min.Y);
-
             bool longInX = boxSpanX > 0.001 && bbSpanX / boxSpanX > LongBoundaryRatio;
             bool longInY = boxSpanY > 0.001 && bbSpanY / boxSpanY > LongBoundaryRatio;
-
-            bool nearYBoundary =
-                Math.Abs(bb.Min.Y - boxMin.Y) < BoundaryNearToleranceFt ||
-                Math.Abs(bb.Max.Y - boxMax.Y) < BoundaryNearToleranceFt ||
-                bb.Max.Y <= boxMin.Y + BoundaryNearToleranceFt ||
-                bb.Min.Y >= boxMax.Y - BoundaryNearToleranceFt;
-
-            bool nearXBoundary =
-                Math.Abs(bb.Min.X - boxMin.X) < BoundaryNearToleranceFt ||
-                Math.Abs(bb.Max.X - boxMax.X) < BoundaryNearToleranceFt ||
-                bb.Max.X <= boxMin.X + BoundaryNearToleranceFt ||
-                bb.Min.X >= boxMax.X - BoundaryNearToleranceFt;
-
-            if (longInX && nearYBoundary)
-                return true;
-
-            if (longInY && nearXBoundary)
-                return true;
-
-            return false;
+            bool nearYBoundary = Math.Abs(bb.Min.Y - boxMin.Y) < BoundaryNearToleranceFt || Math.Abs(bb.Max.Y - boxMax.Y) < BoundaryNearToleranceFt || bb.Max.Y <= boxMin.Y + BoundaryNearToleranceFt || bb.Min.Y >= boxMax.Y - BoundaryNearToleranceFt;
+            bool nearXBoundary = Math.Abs(bb.Min.X - boxMin.X) < BoundaryNearToleranceFt || Math.Abs(bb.Max.X - boxMax.X) < BoundaryNearToleranceFt || bb.Max.X <= boxMin.X + BoundaryNearToleranceFt || bb.Min.X >= boxMax.X - BoundaryNearToleranceFt;
+            return (longInX && nearYBoundary) || (longInY && nearXBoundary);
         }
 
         private void AddBoxesSafe(List<BoundingBoxXYZ> boxes, GeometryExtractor extractor, BuiltInCategory category)
@@ -358,10 +311,7 @@ namespace MEPAutoRouting.Core
                 if (result != null)
                     boxes.AddRange(result);
             }
-            catch
-            {
-                // Ignore category extraction failure.
-            }
+            catch { }
         }
 
         private bool BoxesOverlap(BoundingBoxXYZ bb, XYZ min, XYZ max)
@@ -372,56 +322,32 @@ namespace MEPAutoRouting.Core
             return true;
         }
 
-        private AStarNode GetOrCreateNode(
-            Dictionary<string, AStarNode> grid,
-            XYZ point,
-            SearchBox box,
-            List<BoundingBoxXYZ> obstacles,
-            XYZ start,
-            XYZ end)
+        private AStarNode GetOrCreateNode(Dictionary<string, AStarNode> grid, XYZ point, SearchBox box, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
             int x = (int)Math.Round((point.X - box.Min.X) / GridSize);
             int y = (int)Math.Round((point.Y - box.Min.Y) / GridSize);
             int z = (int)Math.Round((point.Z - box.Min.Z) / GridSize);
-
             string id = GetNodeId(x, y, z);
-
             AStarNode existing;
             if (grid.TryGetValue(id, out existing))
                 return existing;
 
-            XYZ center = new XYZ(
-                box.Min.X + x * GridSize,
-                box.Min.Y + y * GridSize,
-                box.Min.Z + z * GridSize);
-
+            XYZ center = new XYZ(box.Min.X + x * GridSize, box.Min.Y + y * GridSize, box.Min.Z + z * GridSize);
             AStarNode node = new AStarNode(x, y, z, center, id);
-
             bool outsideRoutingVolume = _routingBounds != null && !IsInsideRoutingVolume(center);
             node.IsObstacle = outsideRoutingVolume || CheckIfObstacle(center, obstacles, start, end);
-
             grid[id] = node;
             return node;
         }
 
-        private List<AStarNode> GetNeighbors(
-            AStarNode node,
-            Dictionary<string, AStarNode> grid,
-            SearchBox box,
-            List<BoundingBoxXYZ> obstacles,
-            XYZ start,
-            XYZ end)
+        private List<AStarNode> GetNeighbors(AStarNode node, Dictionary<string, AStarNode> grid, SearchBox box, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
             List<AStarNode> neighbors = new List<AStarNode>();
-
             int[,] dirs = new int[,]
             {
-                {  1,  0,  0 },
-                { -1,  0,  0 },
-                {  0,  1,  0 },
-                {  0, -1,  0 },
-                {  0,  0,  1 },
-                {  0,  0, -1 }
+                { 1, 0, 0 }, { -1, 0, 0 },
+                { 0, 1, 0 }, { 0, -1, 0 },
+                { 0, 0, 1 }, { 0, 0, -1 }
             };
 
             for (int i = 0; i < 6; i++)
@@ -429,20 +355,13 @@ namespace MEPAutoRouting.Core
                 int nx = node.X + dirs[i, 0];
                 int ny = node.Y + dirs[i, 1];
                 int nz = node.Z + dirs[i, 2];
-
-                XYZ center = new XYZ(
-                    box.Min.X + nx * GridSize,
-                    box.Min.Y + ny * GridSize,
-                    box.Min.Z + nz * GridSize);
-
+                XYZ center = new XYZ(box.Min.X + nx * GridSize, box.Min.Y + ny * GridSize, box.Min.Z + nz * GridSize);
                 if (!IsInsideBox(center, box.Min, box.Max))
                     continue;
-
                 if (_routingBounds != null && !IsInsideRoutingVolume(center))
                     continue;
 
                 string id = GetNodeId(nx, ny, nz);
-
                 AStarNode existing;
                 if (!grid.TryGetValue(id, out existing))
                 {
@@ -450,7 +369,6 @@ namespace MEPAutoRouting.Core
                     existing.IsObstacle = CheckIfObstacle(center, obstacles, start, end);
                     grid[id] = existing;
                 }
-
                 neighbors.Add(existing);
             }
 
@@ -459,211 +377,185 @@ namespace MEPAutoRouting.Core
 
         private bool CheckIfObstacle(XYZ point, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
-            if (point.DistanceTo(start) < GridSize * EscapeZoneCells ||
-                point.DistanceTo(end) < GridSize * EscapeZoneCells)
+            if (point.DistanceTo(start) < GridSize * EscapeZoneCells || point.DistanceTo(end) < GridSize * EscapeZoneCells)
                 return false;
-
             double tolerance = GridSize * ObstacleToleranceFactor;
-
             foreach (BoundingBoxXYZ bb in obstacles)
             {
-                if (bb == null)
-                    continue;
-
-                if (point.X >= bb.Min.X - tolerance && point.X <= bb.Max.X + tolerance &&
-                    point.Y >= bb.Min.Y - tolerance && point.Y <= bb.Max.Y + tolerance &&
-                    point.Z >= bb.Min.Z - tolerance && point.Z <= bb.Max.Z + tolerance)
+                if (bb == null) continue;
+                if (point.X >= bb.Min.X - tolerance && point.X <= bb.Max.X + tolerance && point.Y >= bb.Min.Y - tolerance && point.Y <= bb.Max.Y + tolerance && point.Z >= bb.Min.Z - tolerance && point.Z <= bb.Max.Z + tolerance)
                     return true;
             }
-
             return false;
         }
 
         private bool IsSegmentBlocked(XYZ p1, XYZ p2, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
-            if (p1 == null || p2 == null)
-                return true;
-
+            if (p1 == null || p2 == null) return true;
             double length = p1.DistanceTo(p2);
-            if (length < 1e-9)
-                return false;
-
+            if (length < 1e-9) return false;
             double step = GridSize * SegmentSampleFactor;
             int sampleCount = Math.Max(4, (int)Math.Ceiling(length / step));
-
             for (int i = 0; i <= sampleCount; i++)
             {
                 double t = (double)i / (double)sampleCount;
                 XYZ p = p1 + (p2 - p1) * t;
-
-                if (_routingBounds != null && !IsInsideRoutingVolume(p))
-                    return true;
-
-                if (CheckIfObstacle(p, obstacles, start, end))
-                    return true;
+                if (_routingBounds != null && !IsInsideRoutingVolume(p)) return true;
+                if (CheckIfObstacle(p, obstacles, start, end)) return true;
             }
-
             return false;
         }
 
         private bool PathHitsObstacle(List<XYZ> path, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
-            if (path == null || path.Count < 2)
-                return true;
-
+            if (path == null || path.Count < 2) return true;
             for (int i = 0; i < path.Count - 1; i++)
             {
-                if (IsSegmentBlocked(path[i], path[i + 1], obstacles, start, end))
-                    return true;
+                if (IsSegmentBlocked(path[i], path[i + 1], obstacles, start, end)) return true;
             }
-
             return false;
         }
 
         private bool IsInsideRoutingVolume(XYZ point)
         {
-            if (_routingBounds == null)
-                return true;
-
+            if (_routingBounds == null) return true;
             return IsInsideBox(point, _routingBounds.Min, _routingBounds.Max);
         }
 
         private bool IsInsideBox(XYZ point, XYZ min, XYZ max)
         {
-            if (point == null || min == null || max == null)
-                return false;
-
-            return point.X >= min.X && point.X <= max.X &&
-                   point.Y >= min.Y && point.Y <= max.Y &&
-                   point.Z >= min.Z && point.Z <= max.Z;
+            if (point == null || min == null || max == null) return false;
+            return point.X >= min.X && point.X <= max.X && point.Y >= min.Y && point.Y <= max.Y && point.Z >= min.Z && point.Z <= max.Z;
         }
 
         private List<XYZ> RetracePath(AStarNode startNode, AStarNode endNode, XYZ realStart, XYZ realEnd)
         {
-            List<XYZ> path = new List<XYZ>();
+            List<XYZ> gridPath = new List<XYZ>();
             AStarNode current = endNode;
-
             while (current != null && current != startNode)
             {
-                path.Add(current.Center);
+                gridPath.Add(current.Center);
                 current = current.Parent;
             }
-
-            path.Reverse();
-
-            List<XYZ> finalPath = new List<XYZ>();
-            finalPath.Add(realStart);
-            finalPath.AddRange(path);
-            finalPath.Add(realEnd);
-            return finalPath;
+            gridPath.Reverse();
+            return BuildAxisAlignedConnectorFriendlyPath(realStart, gridPath, realEnd);
         }
 
-        private List<XYZ> CleanOrthogonalPath(List<XYZ> path)
+        private List<XYZ> BuildAxisAlignedConnectorFriendlyPath(XYZ realStart, List<XYZ> gridPath, XYZ realEnd)
         {
-            if (path == null || path.Count < 2)
-                return path;
-
-            List<XYZ> rounded = RoundPathToGrid(path);
-            List<XYZ> simplified = SimplifyCollinearPoints(rounded);
-            List<XYZ> cleaned = RemoveVeryShortSegments(simplified);
-            return cleaned;
+            List<XYZ> finalPath = new List<XYZ>();
+            if (realStart == null || realEnd == null) return finalPath;
+            finalPath.Add(realStart);
+            if (gridPath != null)
+            {
+                for (int i = 0; i < gridPath.Count; i++)
+                    AddAxisAlignedTransition(finalPath, gridPath[i]);
+            }
+            AddAxisAlignedTransition(finalPath, realEnd);
+            return RemoveVeryShortSegments(finalPath);
         }
 
-        private List<XYZ> RoundPathToGrid(List<XYZ> path)
+        private void AddAxisAlignedTransition(List<XYZ> path, XYZ target)
+        {
+            if (path == null || target == null) return;
+            if (path.Count == 0)
+            {
+                path.Add(target);
+                return;
+            }
+            XYZ last = path[path.Count - 1];
+            if (last.DistanceTo(target) < 0.001) return;
+            bool sameX = Math.Abs(last.X - target.X) < 0.0001;
+            bool sameY = Math.Abs(last.Y - target.Y) < 0.0001;
+            bool sameZ = Math.Abs(last.Z - target.Z) < 0.0001;
+            if ((sameX && sameY) || (sameX && sameZ) || (sameY && sameZ))
+            {
+                path.Add(target);
+                return;
+            }
+            // Keep horizontal first and split XY into X then Y. Vertical change happens last.
+            XYZ pX = new XYZ(target.X, last.Y, last.Z);
+            XYZ pY = new XYZ(target.X, target.Y, last.Z);
+            if (last.DistanceTo(pX) > 0.001) path.Add(pX);
+            if (pX.DistanceTo(pY) > 0.001) path.Add(pY);
+            if (pY.DistanceTo(target) > 0.001) path.Add(target);
+        }
+
+        private List<XYZ> CleanAxisAlignedPath(List<XYZ> path)
+        {
+            if (path == null || path.Count < 2) return path;
+            List<XYZ> rounded = RoundPath(path);
+            List<XYZ> simplified = SimplifyCollinearPoints(rounded);
+            return RemoveVeryShortSegments(simplified);
+        }
+
+        private List<XYZ> RoundPath(List<XYZ> path)
         {
             List<XYZ> result = new List<XYZ>();
-
             foreach (XYZ p in path)
             {
-                if (p == null)
-                    continue;
-
+                if (p == null) continue;
                 double x = Math.Round(p.X / 0.0001) * 0.0001;
                 double y = Math.Round(p.Y / 0.0001) * 0.0001;
                 double z = Math.Round(p.Z / 0.0001) * 0.0001;
                 result.Add(new XYZ(x, y, z));
             }
-
             return result;
         }
 
         private List<XYZ> SimplifyCollinearPoints(List<XYZ> path)
         {
-            if (path == null || path.Count < 3)
-                return path;
-
+            if (path == null || path.Count < 3) return path;
             List<XYZ> result = new List<XYZ>();
             result.Add(path[0]);
-
             for (int i = 1; i < path.Count - 1; i++)
             {
                 XYZ previous = result[result.Count - 1];
                 XYZ current = path[i];
                 XYZ next = path[i + 1];
-
                 XYZ v1 = current - previous;
                 XYZ v2 = next - current;
-
-                if (v1.GetLength() < 1e-9 || v2.GetLength() < 1e-9)
-                    continue;
-
+                if (v1.GetLength() < 1e-9 || v2.GetLength() < 1e-9) continue;
                 XYZ d1 = NormalizeToMajorAxis(v1);
                 XYZ d2 = NormalizeToMajorAxis(v2);
-
-                if (!IsSameMajorAxis(d1, d2))
-                    result.Add(current);
+                if (!IsSameMajorAxis(d1, d2)) result.Add(current);
             }
-
             result.Add(path[path.Count - 1]);
             return result;
         }
 
         private List<XYZ> RemoveVeryShortSegments(List<XYZ> path)
         {
-            if (path == null || path.Count < 2)
-                return path;
-
+            if (path == null || path.Count < 2) return path;
             List<XYZ> cleaned = new List<XYZ>();
             cleaned.Add(path[0]);
-
             for (int i = 1; i < path.Count; i++)
             {
                 if (cleaned[cleaned.Count - 1].DistanceTo(path[i]) >= 0.05)
                     cleaned.Add(path[i]);
             }
-
             return cleaned;
         }
 
         private double GetHeuristic(XYZ a, XYZ b)
         {
-            // Orthogonal 3D Manhattan heuristic. Z is weighted but not forbidden.
             return Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) + Math.Abs(a.Z - b.Z) * 3.0;
         }
 
         private XYZ NormalizeToMajorAxis(XYZ vector)
         {
-            if (vector == null || vector.GetLength() < 1e-9)
-                return XYZ.BasisX;
-
+            if (vector == null || vector.GetLength() < 1e-9) return XYZ.BasisX;
             double ax = Math.Abs(vector.X);
             double ay = Math.Abs(vector.Y);
             double az = Math.Abs(vector.Z);
-
-            if (ax >= ay && ax >= az)
-                return vector.X >= 0 ? XYZ.BasisX : XYZ.BasisX.Negate();
-
-            if (ay >= ax && ay >= az)
-                return vector.Y >= 0 ? XYZ.BasisY : XYZ.BasisY.Negate();
-
+            if (ax >= ay && ax >= az) return vector.X >= 0 ? XYZ.BasisX : XYZ.BasisX.Negate();
+            if (ay >= ax && ay >= az) return vector.Y >= 0 ? XYZ.BasisY : XYZ.BasisY.Negate();
             return vector.Z >= 0 ? XYZ.BasisZ : XYZ.BasisZ.Negate();
         }
 
         private bool IsSameMajorAxis(XYZ a, XYZ b)
         {
-            if (a == null || b == null)
-                return false;
-
+            if (a == null || b == null) return false;
             return a.DistanceTo(b) < 0.001;
         }
 
@@ -679,7 +571,6 @@ namespace MEPAutoRouting.Core
         public int IgnoredBoundaryCount { get; set; }
         public int IgnoredLowOverlapCount { get; set; }
         public List<BoundingBoxXYZ> UsedObstacles { get; private set; }
-
         public ObstacleResult()
         {
             AllObstaclesCount = 0;
@@ -693,7 +584,6 @@ namespace MEPAutoRouting.Core
     {
         public XYZ Min { get; private set; }
         public XYZ Max { get; private set; }
-
         public SearchBox(XYZ min, XYZ max)
         {
             Min = min;
@@ -712,23 +602,11 @@ namespace MEPAutoRouting.Core
         public double GCost { get; set; }
         public double HCost { get; set; }
         public AStarNode Parent { get; set; }
-
-        public double FCost
-        {
-            get { return GCost + HCost; }
-        }
-
+        public double FCost { get { return GCost + HCost; } }
         public AStarNode(int x, int y, int z, XYZ center, string id)
         {
-            X = x;
-            Y = y;
-            Z = z;
-            Center = center;
-            Id = id;
-            IsObstacle = false;
-            GCost = double.MaxValue;
-            HCost = 0.0;
-            Parent = null;
+            X = x; Y = y; Z = z; Center = center; Id = id;
+            IsObstacle = false; GCost = double.MaxValue; HCost = 0.0; Parent = null;
         }
     }
 
@@ -738,76 +616,54 @@ namespace MEPAutoRouting.Core
         {
             public double Priority;
             public T Item;
-
             public HeapNode(double priority, T item)
             {
                 Priority = priority;
                 Item = item;
             }
         }
-
         private readonly List<HeapNode> _items = new List<HeapNode>();
-
-        public int Count
-        {
-            get { return _items.Count; }
-        }
-
+        public int Count { get { return _items.Count; } }
         public void Push(T item, double priority)
         {
             _items.Add(new HeapNode(priority, item));
             SiftUp(_items.Count - 1);
         }
-
         public T Pop()
         {
             HeapNode root = _items[0];
             HeapNode last = _items[_items.Count - 1];
             _items.RemoveAt(_items.Count - 1);
-
             if (_items.Count > 0)
             {
                 _items[0] = last;
                 SiftDown(0);
             }
-
             return root.Item;
         }
-
         private void SiftUp(int index)
         {
             while (index > 0)
             {
                 int parent = (index - 1) / 2;
-                if (_items[parent].Priority <= _items[index].Priority)
-                    break;
-
+                if (_items[parent].Priority <= _items[index].Priority) break;
                 HeapNode temp = _items[parent];
                 _items[parent] = _items[index];
                 _items[index] = temp;
                 index = parent;
             }
         }
-
         private void SiftDown(int index)
         {
             int count = _items.Count;
-
             while (true)
             {
                 int left = index * 2 + 1;
                 int right = left + 1;
                 int smallest = index;
-
-                if (left < count && _items[left].Priority < _items[smallest].Priority)
-                    smallest = left;
-
-                if (right < count && _items[right].Priority < _items[smallest].Priority)
-                    smallest = right;
-
-                if (smallest == index)
-                    break;
-
+                if (left < count && _items[left].Priority < _items[smallest].Priority) smallest = left;
+                if (right < count && _items[right].Priority < _items[smallest].Priority) smallest = right;
+                if (smallest == index) break;
                 HeapNode temp = _items[index];
                 _items[index] = _items[smallest];
                 _items[smallest] = temp;

@@ -8,19 +8,8 @@ namespace MEPAutoRouting.Plumbing
     {
         private readonly Document _doc;
         private readonly BoundingBoxXYZ _routingBounds;
-
-        public PipeRoutingEngine(Document doc)
-        {
-            _doc = doc;
-            _routingBounds = null;
-        }
-
-        public PipeRoutingEngine(Document doc, BoundingBoxXYZ routingBounds)
-        {
-            _doc = doc;
-            _routingBounds = routingBounds;
-        }
-
+        public PipeRoutingEngine(Document doc) { _doc = doc; _routingBounds = null; }
+        public PipeRoutingEngine(Document doc, BoundingBoxXYZ routingBounds) { _doc = doc; _routingBounds = routingBounds; }
         public List<XYZ> GeneratePath(XYZ start, XYZ end)
         {
             AStarPathfinder astar = new AStarPathfinder(_doc, _routingBounds);

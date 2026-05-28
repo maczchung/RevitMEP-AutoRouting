@@ -10,7 +10,6 @@ namespace MEPAutoRouting.Core
                 return false;
 
             BuiltInCategory category = (BuiltInCategory)elem.Category.Id.Value;
-
             return category == BuiltInCategory.OST_Rooms ||
                    category == BuiltInCategory.OST_MEPSpaces ||
                    category == BuiltInCategory.OST_Mass ||
@@ -23,28 +22,11 @@ namespace MEPAutoRouting.Core
                 return null;
 
             BoundingBoxXYZ bb = null;
-
-            try
-            {
-                bb = elem.get_BoundingBox(doc.ActiveView);
-            }
-            catch
-            {
-                bb = null;
-            }
-
+            try { bb = elem.get_BoundingBox(doc.ActiveView); } catch { bb = null; }
             if (bb == null)
             {
-                try
-                {
-                    bb = elem.get_BoundingBox(null);
-                }
-                catch
-                {
-                    bb = null;
-                }
+                try { bb = elem.get_BoundingBox(null); } catch { bb = null; }
             }
-
             return bb;
         }
 
@@ -57,7 +39,6 @@ namespace MEPAutoRouting.Core
         {
             if (point == null || bounds == null)
                 return false;
-
             return point.X >= bounds.Min.X && point.X <= bounds.Max.X &&
                    point.Y >= bounds.Min.Y && point.Y <= bounds.Max.Y &&
                    point.Z >= bounds.Min.Z && point.Z <= bounds.Max.Z;
@@ -65,9 +46,7 @@ namespace MEPAutoRouting.Core
 
         public static string FormatBounds(BoundingBoxXYZ bounds)
         {
-            if (bounds == null)
-                return "(null)";
-
+            if (bounds == null) return "(null)";
             return "Min(" + bounds.Min.X.ToString("F2") + ", " + bounds.Min.Y.ToString("F2") + ", " + bounds.Min.Z.ToString("F2") + ")" +
                    " / Max(" + bounds.Max.X.ToString("F2") + ", " + bounds.Max.Y.ToString("F2") + ", " + bounds.Max.Z.ToString("F2") + ")";
         }
