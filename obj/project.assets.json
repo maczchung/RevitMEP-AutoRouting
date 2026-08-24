@@ -13,11 +13,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "L:\\m.kwok\\VS code\\MEPAutoRouting\\MEPAutoRouting.csproj",
+      "projectUniqueName": "L:\\m.kwok\\VS code\\00_Active\\RevitMEP-AutoRouting\\MEPAutoRouting.csproj",
       "projectName": "MEPAutoRouting",
-      "projectPath": "L:\\m.kwok\\VS code\\MEPAutoRouting\\MEPAutoRouting.csproj",
+      "projectPath": "L:\\m.kwok\\VS code\\00_Active\\RevitMEP-AutoRouting\\MEPAutoRouting.csproj",
       "packagesPath": "C:\\Users\\m.kwok\\.nuget\\packages\\",
-      "outputPath": "L:\\m.kwok\\VS code\\MEPAutoRouting\\obj\\",
+      "outputPath": "L:\\m.kwok\\VS code\\00_Active\\RevitMEP-AutoRouting\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\m.kwok\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -67,7 +67,7 @@
             "privateAssets": "none"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.421/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.424/PortableRuntimeIdentifierGraph.json"
       }
     }
   }
