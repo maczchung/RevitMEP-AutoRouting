@@ -1,9 +1,73 @@
+# ============================
+# .NET / MSBuild build output
+# ============================
 bin/
 obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.dll
+*.pdb
+*.exe
+*.cache
+
+# ============================
+# Visual Studio / VS Code
+# ============================
 .vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 *.user
 *.suo
-*.cache
-*.db
-*.pdb
-*.log
+*.userosscache
+*.sln.docstates
+
+# ============================
+# Rider / JetBrains
+# ============================
+.idea/
+
+# ============================
+# NuGet
+# ============================
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+
+# ============================
+# Revit / Autodesk 備份檔
+# ============================
+*.rvt.lock
+*.backup
+*.0001.rvt
+*.0002.rvt
+*.0003.rvt
+*.rws
+Backup/
+
+# ============================
+# Dynamo / Python 暫存
+# ============================
+*.dyn.bak
+__pycache__/
+*.pyc
+
+# ============================
+# 敏感資料 (千祈唔好上載)
+# ============================
+appsettings.*.json
+secrets.json
+*.env
+*.pfx
+*.snk
+
+# ============================
+# 系統檔
+# ============================
+Thumbs.db
+Desktop.ini
+.DS_Store
