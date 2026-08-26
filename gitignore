@@ -1,0 +1,182 @@
+# ==============================================================================
+# .gitignore for Revit Add-in Development (.NET 8 / net48)
+# VS Code + Visual Studio + Dynamo/Python + Revit
+# Author: Matthew Kwok | Cundall
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# .NET / MSBuild Build Output
+# ------------------------------------------------------------------------------
+bin/
+obj/
+out/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+build/
+bld/
+[Bb]inaries/
+*.dll
+*.exe
+*.pdb
+*.cache
+*.tmp
+
+# ------------------------------------------------------------------------------
+# Visual Studio
+# ------------------------------------------------------------------------------
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.iobj
+*.ipdb
+*.tlb
+*.tli
+*.tlh
+*.tmp_proj
+*.log
+*.tlog
+*.vspscc
+*.vssscc
+.builds
+
+# ------------------------------------------------------------------------------
+# VS Code (你用開 VS Code — 保留共享設定，忽略個人嘢)
+# ------------------------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+.history/
+
+# ------------------------------------------------------------------------------
+# NuGet
+# ------------------------------------------------------------------------------
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+.nuget/
+nuget.exe
+
+# ------------------------------------------------------------------------------
+# Revit-specific
+# ------------------------------------------------------------------------------
+# 唔好 commit 大型 Revit models / 備份 / journal
+*.rvt
+*.rfa
+*.rte
+*.rvt.lock
+*_backup/
+*.[0-9][0-9][0-9][0-9].rvt
+*.[0-9][0-9][0-9][0-9].rfa
+Journals/
+*.slog
+CollaborationCache/
+
+# 但保留測試用嘅細 model（如需要，手動 force add）
+# 例:  git add -f TestScenes/scene01.rvt
+
+# ------------------------------------------------------------------------------
+# Dynamo / Python (Dynamo 2.x, CPython3)
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+*.dyn.bak
+backup/
+*.dyf.bak
+
+# ------------------------------------------------------------------------------
+# Add-in Deployment (敏感 / 機器專屬)
+# ------------------------------------------------------------------------------
+# .addin 路徑通常因機而異，如屬 per-machine 就忽略
+# *.addin
+*.publishproj
+PublishProfiles/
+*.pubxml
+*.pubxml.user
+
+# ------------------------------------------------------------------------------
+# Test / Coverage
+# ------------------------------------------------------------------------------
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+TestResults/
+.nunit/
+nunit-*.xml
+
+# ------------------------------------------------------------------------------
+# Secrets / 憑證 (千祈唔好 commit!)
+# ------------------------------------------------------------------------------
+*.pfx
+*.snk
+*.p12
+*.key
+secrets.json
+appsettings.*.local.json
+.env
+.env.local
+*.token
+credentials.json
+
+# ------------------------------------------------------------------------------
+# Office / 文件暫存 (你成日用 Excel/Word 做 register/template)
+# ------------------------------------------------------------------------------
+~$*.xlsx
+~$*.xls
+~$*.docx
+~$*.doc
+~$*.pptx
+*.xlk
+
+# ------------------------------------------------------------------------------
+# OS-generated
+# ------------------------------------------------------------------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# ------------------------------------------------------------------------------
+# Misc / Logs / Temp
+# ------------------------------------------------------------------------------
+*.bak
+*.swp
+*.orig
+*.rej
+logs/
+*.log
+temp/
+tmp/
