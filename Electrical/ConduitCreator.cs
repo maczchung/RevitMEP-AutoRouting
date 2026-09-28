@@ -17,6 +17,14 @@ namespace MEPAutoRouting.Electrical
 
         public void Create(List<XYZ> pts)
         {
+            Create(pts, null);
+        }
+
+        public int Create(List<XYZ> pts, IList<string> failures)
+        {
+            if (!PathUtils.IsValid(pts)) return 0;
+            List<XYZ> path = PathUtils.MergeCollinear(pts);
+            if (!PathUtils.IsValid(path)) return 0;
             ElementId levelId = RoutingUtils.GetFirstLevelId(_doc);
             ElementId typeId = RoutingUtils.GetFirstConduitTypeId(_doc);
 
@@ -27,15 +35,19 @@ namespace MEPAutoRouting.Electrical
             {
                 t.Start();
 
-                for (int i = 0; i < pts.Count - 1; i++)
+                List<MEPCurve> segments = new List<MEPCurve>();
+                for (int i = 0; i < path.Count - 1; i++)
                 {
-                    XYZ p1 = pts[i];
-                    XYZ p2 = pts[i + 1];
+                    XYZ p1 = path[i];
+                    XYZ p2 = path[i + 1];
                     if (p1.DistanceTo(p2) < 0.001) continue;
-                    Conduit.Create(_doc, typeId, p1, p2, levelId);
+                    Conduit conduit = Conduit.Create(_doc, typeId, p1, p2, levelId);
+                    if (conduit != null) segments.Add(conduit);
                 }
 
+                MepFittingUtils.CreateElbows(_doc, segments, path, failures);
                 t.Commit();
+                return segments.Count;
             }
         }
     }

@@ -1,0 +1,25 @@
+// ===== 加入 VoxelGrid.cs（改返你原本嘅欄位名：NX/NY/NZ、Blocked[,,]、CellToWorld）=====
+
+/// <summary>逐個 cell 中心檢查牆間距 + Space 範圍。返回被 block 嘅 cell 數（debug 用）。</summary>
+public int ApplyConstraints(RoutingConstraints c)
+{
+    if (c == null) return 0;
+    int blocked = 0;
+    for (int ix = 0; ix < NX; ix++)
+    for (int iy = 0; iy < NY; iy++)
+    for (int iz = 0; iz < NZ; iz++)
+    {
+        if (Blocked[ix, iy, iz]) continue;
+        XYZ center = CellToWorld(ix, iy, iz);
+        if (c.IsBlocked(center))
+        {
+            Blocked[ix, iy, iz] = true;
+            blocked++;
+        }
+    }
+    return blocked;
+}
+
+// 注意：原本嘅牆 obstacle（用 bounding box block 嗰啲）要跳過 Wall，
+// 否則斜牆會被當成成個長方形，而且會重複計：
+//   if (e is Wall) continue;   // 牆改由 RoutingConstraints 處理

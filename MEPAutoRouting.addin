@@ -1,11 +1,11 @@
-<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<?xml version="1.0" encoding="utf-8"?>
 <RevitAddIns>
-  <AddIn Type="Command">
-    <Name>Unified Routing</Name>
-    <Assembly>C:\Users\m.kwok\AppData\Roaming\Autodesk\Revit\Addins\2024\MEPAutoRouting.dll</Assembly>
-    <AddInId>8D83C886-B739-4ACD-A9DB-3F85F2D1A111</AddInId>
-    <FullClassName>MEPAutoRouting.UnifiedRoutingCommand</FullClassName>
-    <VendorId>MY</VendorId>
-    <VendorDescription>MEP Auto Routing</VendorDescription>
+  <AddIn Type="Application">
+    <Name>MEP Auto Routing</Name>
+    <Assembly>MEPAutoRouting\MEPAutoRouting.dll</Assembly>
+    <FullClassName>MEPAutoRouting.Core.App</FullClassName>
+    <AddInId>7B3E2A41-5C8D-4F1E-9A62-3D0C8B7E4F15</AddInId>
+    <VendorId>MKWK</VendorId>
+    <VendorDescription>Matthew Kwok - BIM Coordination Tools</VendorDescription>
   </AddIn>
 </RevitAddIns>

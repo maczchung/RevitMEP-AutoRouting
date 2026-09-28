@@ -1,0 +1,40 @@
+// ===== 加入 UnifiedRoutingUI.xaml.cs =====
+
+public RoutingOptions Options { get; private set; } = RoutingOptions.Load();
+
+// Constructor 入面 InitializeComponent() 之後 call
+private void LoadConstraintOptions()
+{
+    TxtWallClearance.Text = Options.WallClearanceMm.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    ChkIncludeLinkWalls.IsChecked = Options.IncludeLinkWalls;
+    ChkClearanceOnSpaceBoundary.IsChecked = Options.ClearanceOnSpaceBoundary;
+    RbSpaceNone.IsChecked = Options.SpaceSource == SpaceSource.None;
+    RbSpaceHost.IsChecked = Options.SpaceSource == SpaceSource.Host;
+    RbSpaceLink.IsChecked = Options.SpaceSource == SpaceSource.Link;
+}
+
+// OK / Run button handler 入面，DialogResult = true 之前 call；return false 就唔好關 window
+private bool ReadConstraintOptions()
+{
+    if (!RoutingOptions.TryParseMm(TxtWallClearance.Text, out double mm, out string err))
+    {
+        System.Windows.MessageBox.Show(err, "Unified Routing");
+        TxtWallClearance.Focus();
+        return false;
+    }
+    Options.WallClearanceMm = mm;
+    Options.IncludeLinkWalls = ChkIncludeLinkWalls.IsChecked == true;
+    Options.ClearanceOnSpaceBoundary = ChkClearanceOnSpaceBoundary.IsChecked == true;
+    Options.SpaceSource = RbSpaceHost.IsChecked == true ? SpaceSource.Host
+                        : RbSpaceLink.IsChecked == true ? SpaceSource.Link
+                        : SpaceSource.None;
+    Options.Save();
+    return true;
+}
+
+// 例子：
+// private void BtnRun_Click(object sender, RoutedEventArgs e)
+// {
+//     if (!ReadConstraintOptions()) return;
+//     DialogResult = true;
+// }

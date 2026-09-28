@@ -5,68 +5,47 @@
     <OutputType>Library</OutputType>
     <RootNamespace>MEPAutoRouting</RootNamespace>
     <AssemblyName>MEPAutoRouting</AssemblyName>
-    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <PlatformTarget>x64</PlatformTarget>
-    <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
-    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
-
-    <!-- Revit 2025 API is .NET 8. MSB3277 warnings can appear from RevitAPIUI transitive dependencies. -->
+    <Platforms>x64</Platforms>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <DefineConstants>$(DefineConstants);REVIT2025</DefineConstants>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-    <DefineConstants>DEBUG;TRACE;REVIT2025</DefineConstants>
+    <Version>1.1.0</Version>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
+    <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2025</RevitAddinsDir>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <DefineConstants>TRACE;REVIT2025</DefineConstants>
     <Optimize>true</Optimize>
-  </PropertyGroup>
-
-  <PropertyGroup>
-    <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="RevitAPI">
       <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
       <Private>false</Private>
-      <SpecificVersion>false</SpecificVersion>
     </Reference>
     <Reference Include="RevitAPIUI">
       <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
       <Private>false</Private>
-      <SpecificVersion>false</SpecificVersion>
-    </Reference>
-
-    <!-- Explicit Revit 2025 dependencies to reduce ResolveAssemblyReference conflicts/noise. -->
-    <Reference Include="AdWindows">
-      <HintPath>$(RevitInstallDir)\AdWindows.dll</HintPath>
-      <Private>false</Private>
-      <SpecificVersion>false</SpecificVersion>
-    </Reference>
-    <Reference Include="UIFramework">
-      <HintPath>$(RevitInstallDir)\UIFramework.dll</HintPath>
-      <Private>false</Private>
-      <SpecificVersion>false</SpecificVersion>
-    </Reference>
-    <Reference Include="UIFrameworkServices">
-      <HintPath>$(RevitInstallDir)\UIFrameworkServices.dll</HintPath>
-      <Private>false</Private>
-      <SpecificVersion>false</SpecificVersion>
-    </Reference>
-    <Reference Include="DetailAPI">
-      <HintPath>$(RevitInstallDir)\DetailAPI.dll</HintPath>
-      <Private>false</Private>
-      <SpecificVersion>false</SpecificVersion>
-    </Reference>
-    <Reference Include="SSONET">
-      <HintPath>$(RevitInstallDir)\SSONET.dll</HintPath>
-      <Private>false</Private>
-      <SpecificVersion>false</SpecificVersion>
     </Reference>
   </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\*.png" />
+    <None Include="MEPAutoRouting.addin" />
+  </ItemGroup>
+
+  <!-- Auto-deploy after Debug build. Close Revit first (DLL is locked while Revit runs). -->
+  <Target Name="DeployToRevit" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
+    <ItemGroup>
+      <DeployFiles Include="$(TargetDir)*.dll;$(TargetDir)*.pdb" />
+    </ItemGroup>
+    <MakeDir Directories="$(RevitAddinsDir)\MEPAutoRouting" />
+    <Copy SourceFiles="@(DeployFiles)" DestinationFolder="$(RevitAddinsDir)\MEPAutoRouting" SkipUnchangedFiles="true" ContinueOnError="true" />
+    <Copy SourceFiles="MEPAutoRouting.addin" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Deployed to $(RevitAddinsDir)\MEPAutoRouting" />
+  </Target>
 </Project>

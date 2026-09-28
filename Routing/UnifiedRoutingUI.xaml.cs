@@ -3,6 +3,7 @@ using Autodesk.Revit.UI;
 using System.Collections.Generic;
 using System.Windows;
 using MEPAutoRouting.Core;
+using System.Globalization;
 
 namespace MEPAutoRouting.Routing
 {
@@ -23,10 +24,12 @@ namespace MEPAutoRouting.Routing
         public List<PipeTypeOption> PipeTypeOptions { get; set; }
         public ElementId SelectedPipeTypeId { get; set; }
         public double SelectedPipeDiameterMm { get; set; }
+        public RoutingOptions Options { get; private set; } = RoutingOptions.Load();
 
         public UnifiedRoutingUI()
         {
             InitializeComponent();
+            LoadConstraintOptions();
             cbMode.SelectedIndex = (int)UnifiedRoutingCommand.CurrentMode;
             PipeTypeOptions = new List<PipeTypeOption>();
             SelectedPipeTypeId = ElementId.InvalidElementId;
@@ -73,10 +76,36 @@ namespace MEPAutoRouting.Routing
             return true;
         }
 
-        private void PickStart_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.PickStart; DialogResult = true; }
-        private void PickEnd_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.PickEnd; DialogResult = true; }
-        private void PickVolume_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.PickVolume; DialogResult = true; }
-        private void Run_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.Run; DialogResult = true; }
+        private void LoadConstraintOptions()
+        {
+            TxtWallClearance.Text = Options.WallClearanceMm.ToString(CultureInfo.InvariantCulture);
+            ChkIncludeLinkWalls.IsChecked = Options.IncludeLinkWalls;
+            ChkClearanceOnSpaceBoundary.IsChecked = Options.ClearanceOnSpaceBoundary;
+            RbSpaceNone.IsChecked = Options.SpaceSource == SpaceSource.None;
+            RbSpaceHost.IsChecked = Options.SpaceSource == SpaceSource.Host;
+            RbSpaceLink.IsChecked = Options.SpaceSource == SpaceSource.Link;
+        }
+
+        private bool ReadConstraintOptions()
+        {
+            if (!RoutingOptions.TryParseMm(TxtWallClearance.Text, out double mm, out string error))
+            {
+                MessageBox.Show(error, "Unified Routing");
+                TxtWallClearance.Focus();
+                return false;
+            }
+            Options.WallClearanceMm = mm;
+            Options.IncludeLinkWalls = ChkIncludeLinkWalls.IsChecked == true;
+            Options.ClearanceOnSpaceBoundary = ChkClearanceOnSpaceBoundary.IsChecked == true;
+            Options.SpaceSource = RbSpaceHost.IsChecked == true ? SpaceSource.Host : RbSpaceLink.IsChecked == true ? SpaceSource.Link : SpaceSource.None;
+            Options.Save();
+            return true;
+        }
+
+        private void PickStart_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI() || !ReadConstraintOptions()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.PickStart; DialogResult = true; }
+        private void PickEnd_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI() || !ReadConstraintOptions()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.PickEnd; DialogResult = true; }
+        private void PickVolume_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI() || !ReadConstraintOptions()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.PickVolume; DialogResult = true; }
+        private void Run_Click(object sender, RoutedEventArgs e) { if (!CapturePipeSettingsFromUI() || !ReadConstraintOptions()) return; UnifiedRoutingCommand.CurrentMode = cbMode.SelectedIndex == 0 ? RoutingMode.Pipe : RoutingMode.Conduit; ActionRequested = UserAction.Run; DialogResult = true; }
         private void Cancel_Click(object sender, RoutedEventArgs e) { ActionRequested = UserAction.Cancel; DialogResult = false; }
 
         private string FormatXYZ(XYZ point)

@@ -44,10 +44,9 @@ namespace MEPAutoRouting.Core
                 foreach (Element elem in collector)
                 {
                     BoundingBoxXYZ bb = elem.get_BoundingBox(null);
-                    if (bb == null)
-                        continue;
-
-                    boxes.Add(bb);
+                    if (bb == null) continue;
+                    var world = BoundingBoxUtils.GetWorldBounds(bb);
+                    boxes.Add(CreateBounds(world.Min, world.Max));
                 }
             }
             catch
@@ -91,11 +90,8 @@ namespace MEPAutoRouting.Core
                         if (linkBox == null)
                             continue;
 
-                        BoundingBoxXYZ transformedBox =
-                            TransformBoundingBox(linkBox, linkTransform);
-
-                        if (transformedBox != null)
-                            boxes.Add(transformedBox);
+                        var world = BoundingBoxUtils.GetWorldBounds(linkBox, linkTransform);
+                        boxes.Add(CreateBounds(world.Min, world.Max));
                     }
                 }
             }
@@ -112,54 +108,11 @@ namespace MEPAutoRouting.Core
         /// BoundingBoxXYZ is axis-aligned, so we transform all 8 corners
         /// then create a new axis-aligned box around the transformed points.
         /// </summary>
-        private BoundingBoxXYZ TransformBoundingBox(
-            BoundingBoxXYZ box,
-            Transform transform)
+        private BoundingBoxXYZ CreateBounds(XYZ min, XYZ max)
         {
-            if (box == null || transform == null)
-                return null;
-
-            XYZ min = box.Min;
-            XYZ max = box.Max;
-
-            XYZ[] corners = new XYZ[]
-            {
-                new XYZ(min.X, min.Y, min.Z),
-                new XYZ(max.X, min.Y, min.Z),
-                new XYZ(min.X, max.Y, min.Z),
-                new XYZ(max.X, max.Y, min.Z),
-
-                new XYZ(min.X, min.Y, max.Z),
-                new XYZ(max.X, min.Y, max.Z),
-                new XYZ(min.X, max.Y, max.Z),
-                new XYZ(max.X, max.Y, max.Z)
-            };
-
-            double minX = double.MaxValue;
-            double minY = double.MaxValue;
-            double minZ = double.MaxValue;
-
-            double maxX = double.MinValue;
-            double maxY = double.MinValue;
-            double maxZ = double.MinValue;
-
-            foreach (XYZ corner in corners)
-            {
-                XYZ p = transform.OfPoint(corner);
-
-                minX = Math.Min(minX, p.X);
-                minY = Math.Min(minY, p.Y);
-                minZ = Math.Min(minZ, p.Z);
-
-                maxX = Math.Max(maxX, p.X);
-                maxY = Math.Max(maxY, p.Y);
-                maxZ = Math.Max(maxZ, p.Z);
-            }
-
             BoundingBoxXYZ newBox = new BoundingBoxXYZ();
-            newBox.Min = new XYZ(minX, minY, minZ);
-            newBox.Max = new XYZ(maxX, maxY, maxZ);
-
+            newBox.Min = min;
+            newBox.Max = max;
             return newBox;
         }
     }

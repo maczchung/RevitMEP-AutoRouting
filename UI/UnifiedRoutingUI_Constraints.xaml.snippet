@@ -1,0 +1,17 @@
+<!-- 貼入 UnifiedRoutingUI.xaml，放喺 OK / Run button 上面 -->
+<GroupBox Header="Routing Constraints" Margin="0,8,0,0" Padding="6">
+    <StackPanel>
+        <DockPanel Margin="0,2">
+            <TextBlock Text="Wall clearance (mm)" Width="150" VerticalAlignment="Center"/>
+            <TextBox x:Name="TxtWallClearance" Width="80" Text="50"
+                     ToolTip="牆面去管外皮嘅淨距 (0 – 2000 mm)"/>
+        </DockPanel>
+        <CheckBox x:Name="ChkIncludeLinkWalls" Content="包括 Linked model 嘅牆" IsChecked="True" Margin="0,4,0,0"/>
+        <CheckBox x:Name="ChkClearanceOnSpaceBoundary" Content="Space 邊界都留同樣間距" IsChecked="True" Margin="0,2,0,0"/>
+
+        <TextBlock Text="Routing Space" FontWeight="SemiBold" Margin="0,8,0,2"/>
+        <RadioButton x:Name="RbSpaceNone" GroupName="SpaceSrc" Content="唔限制（用原本 routing volume）" IsChecked="True"/>
+        <RadioButton x:Name="RbSpaceHost" GroupName="SpaceSrc" Content="揀 Host model 嘅 Space / Room"/>
+        <RadioButton x:Name="RbSpaceLink" GroupName="SpaceSrc" Content="揀 Linked model 嘅 Space / Room"/>
+    </StackPanel>
+</GroupBox>

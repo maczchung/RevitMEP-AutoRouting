@@ -27,7 +27,11 @@ namespace MEPAutoRouting.Core
             {
                 try { bb = elem.get_BoundingBox(null); } catch { bb = null; }
             }
-            return bb;
+            var world = BoundingBoxUtils.GetWorldBounds(bb);
+            BoundingBoxXYZ result = new BoundingBoxXYZ();
+            result.Min = world.Min;
+            result.Max = world.Max;
+            return result;
         }
 
         public static BoundingBoxXYZ GetElementBounds(Document doc, Element elem)
@@ -39,9 +43,10 @@ namespace MEPAutoRouting.Core
         {
             if (point == null || bounds == null)
                 return false;
-            return point.X >= bounds.Min.X && point.X <= bounds.Max.X &&
-                   point.Y >= bounds.Min.Y && point.Y <= bounds.Max.Y &&
-                   point.Z >= bounds.Min.Z && point.Z <= bounds.Max.Z;
+                 var world = BoundingBoxUtils.GetWorldBounds(bounds);
+                 return point.X >= world.Min.X && point.X <= world.Max.X &&
+                     point.Y >= world.Min.Y && point.Y <= world.Max.Y &&
+                     point.Z >= world.Min.Z && point.Z <= world.Max.Z;
         }
 
         public static string FormatBounds(BoundingBoxXYZ bounds)

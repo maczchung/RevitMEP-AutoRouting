@@ -1,0 +1,49 @@
+// ===== UnifiedRoutingCommand.Execute 入面，ShowDialog() == true 之後 =====
+// （PickObject 一定要喺 modal window 關咗之後先 call）
+
+RoutingOptions opt = ui.Options;
+
+// ---- 功能 2：Space（Host / Link）----
+SpaceVolume space = null;
+try
+{
+    space = opt.SpaceSource switch
+    {
+        SpaceSource.Host => SpacePicker.PickHost(uidoc),
+        SpaceSource.Link => SpacePicker.PickLinked(uidoc),
+        _ => null
+    };
+}
+catch (InvalidOperationException ex)   // Not enclosed / Area = 0
+{
+    TaskDialog.Show("Unified Routing", ex.Message);
+    return Result.Cancelled;
+}
+if (opt.SpaceSource != SpaceSource.None && space == null) return Result.Cancelled;   // 用戶 Esc
+
+// Routing 範圍：有 Space 就用 Space，否則用原本 RoutingVolumeUtils 計出嚟嘅
+XYZ regionMin = space?.Min ?? volumeMin;   // volumeMin / volumeMax = 你原本嘅變數
+XYZ regionMax = space?.Max ?? volumeMax;
+
+// ---- 功能 1：牆間距 ----
+double pipeRadius = diameter / 2.0;        // 用你原本 UI 嘅管徑 (feet)；有外徑就用外徑
+double clearance  = opt.WallClearanceFt;
+var walls = WallObstacleCollector.Collect(doc, regionMin, regionMax,
+                                          opt.IncludeLinkWalls, clearance + pipeRadius);
+
+var constraints = new RoutingConstraints(space, walls, clearance, pipeRadius,
+                                         opt.ClearanceOnSpaceBoundary);
+double exemptR = constraints.SuggestedExemptRadius(cellSize);   // cellSize = VoxelGrid 格大小
+constraints.AddExemptPoint(startPoint, exemptR);
+constraints.AddExemptPoint(endPoint,   exemptR);
+
+// 起點 / 終點唔喺 Space 入面就提早話俾用戶知
+if (space != null && (!space.Contains(startPoint) || !space.Contains(endPoint)))
+{
+    TaskDialog.Show("Unified Routing", $"起點或終點唔喺 Space '{space.Name}' 入面。");
+    return Result.Cancelled;
+}
+
+// ---- 傳入 VoxelGrid ----
+var grid = new VoxelGrid(regionMin, regionMax, cellSize /*, 原本參數 */);
+grid.ApplyConstraints(constraints);        // 見 APPLY_FEATURES.md Step 3

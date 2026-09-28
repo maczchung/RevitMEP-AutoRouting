@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using MEPAutoRouting;
 
 namespace MEPAutoRouting.Core
 {
@@ -18,6 +19,7 @@ namespace MEPAutoRouting.Core
     {
         private readonly Document _doc;
         private readonly BoundingBoxXYZ _routingBounds;
+        private readonly RoutingConstraints _constraints;
 
         private const double GridSize = 0.5;                 // feet, approx. 152 mm
         private const int MarginCells = 12;
@@ -41,12 +43,21 @@ namespace MEPAutoRouting.Core
         {
             _doc = doc;
             _routingBounds = null;
+            _constraints = null;
         }
 
         public AStarPathfinder(Document doc, BoundingBoxXYZ routingBounds)
         {
             _doc = doc;
             _routingBounds = routingBounds;
+            _constraints = null;
+        }
+
+        public AStarPathfinder(Document doc, BoundingBoxXYZ routingBounds, RoutingConstraints constraints)
+        {
+            _doc = doc;
+            _routingBounds = routingBounds;
+            _constraints = constraints;
         }
 
         public List<XYZ> FindPath(XYZ start, XYZ end)
@@ -152,20 +163,11 @@ namespace MEPAutoRouting.Core
 
                         if (current.Parent != null)
                         {
-                            int dx1 = current.X - current.Parent.X;
-                            int dy1 = current.Y - current.Parent.Y;
-                            int dz1 = current.Z - current.Parent.Z;
-
-                            bool isTurn = dx1 != dx2 || dy1 != dy2 || dz1 != dz2;
-                            bool isReverse = dx1 == -dx2 && dy1 == -dy2 && dz1 == -dz2;
-
-                            if (isTurn)
-                                movementCost += TurnPenalty;
-                            else
-                                movementCost -= ContinueStraightBonus;
-
-                            if (isReverse)
+                            movementCost += PathUtils.TurnPenalty(current.Direction, (dx2, dy2, dz2), TurnPenalty);
+                            if (current.Direction == (-dx2, -dy2, -dz2))
                                 movementCost += ReversePenalty;
+                            else if (current.Direction == (dx2, dy2, dz2))
+                                movementCost -= ContinueStraightBonus;
                         }
                         else
                         {
@@ -178,6 +180,7 @@ namespace MEPAutoRouting.Core
                         if (tentativeG < neighbor.GCost)
                         {
                             neighbor.Parent = current;
+                            neighbor.Direction = (dx2, dy2, dz2);
                             neighbor.GCost = tentativeG;
                             neighbor.HCost = GetHeuristic(neighbor.Center, endNode.Center);
                             openHeap.Push(neighbor, neighbor.FCost);
@@ -236,7 +239,6 @@ namespace MEPAutoRouting.Core
             GeometryExtractor extractor = new GeometryExtractor(_doc);
             List<BoundingBoxXYZ> all = new List<BoundingBoxXYZ>();
 
-            AddBoxesSafe(all, extractor, BuiltInCategory.OST_Walls);
             AddBoxesSafe(all, extractor, BuiltInCategory.OST_Columns);
             AddBoxesSafe(all, extractor, BuiltInCategory.OST_StructuralColumns);
             AddBoxesSafe(all, extractor, BuiltInCategory.OST_StructuralFraming);
@@ -343,18 +345,11 @@ namespace MEPAutoRouting.Core
         private List<AStarNode> GetNeighbors(AStarNode node, Dictionary<string, AStarNode> grid, SearchBox box, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
             List<AStarNode> neighbors = new List<AStarNode>();
-            int[,] dirs = new int[,]
+            foreach ((int dx, int dy, int dz) direction in PathUtils.SixNeighbours)
             {
-                { 1, 0, 0 }, { -1, 0, 0 },
-                { 0, 1, 0 }, { 0, -1, 0 },
-                { 0, 0, 1 }, { 0, 0, -1 }
-            };
-
-            for (int i = 0; i < 6; i++)
-            {
-                int nx = node.X + dirs[i, 0];
-                int ny = node.Y + dirs[i, 1];
-                int nz = node.Z + dirs[i, 2];
+                int nx = node.X + direction.dx;
+                int ny = node.Y + direction.dy;
+                int nz = node.Z + direction.dz;
                 XYZ center = new XYZ(box.Min.X + nx * GridSize, box.Min.Y + ny * GridSize, box.Min.Z + nz * GridSize);
                 if (!IsInsideBox(center, box.Min, box.Max))
                     continue;
@@ -379,6 +374,8 @@ namespace MEPAutoRouting.Core
         {
             if (point.DistanceTo(start) < GridSize * EscapeZoneCells || point.DistanceTo(end) < GridSize * EscapeZoneCells)
                 return false;
+            if (_constraints != null && _constraints.IsBlocked(point))
+                return true;
             double tolerance = GridSize * ObstacleToleranceFactor;
             foreach (BoundingBoxXYZ bb in obstacles)
             {
@@ -438,47 +435,10 @@ namespace MEPAutoRouting.Core
                 current = current.Parent;
             }
             gridPath.Reverse();
-            return BuildAxisAlignedConnectorFriendlyPath(realStart, gridPath, realEnd);
-        }
-
-        private List<XYZ> BuildAxisAlignedConnectorFriendlyPath(XYZ realStart, List<XYZ> gridPath, XYZ realEnd)
-        {
-            List<XYZ> finalPath = new List<XYZ>();
-            if (realStart == null || realEnd == null) return finalPath;
-            finalPath.Add(realStart);
-            if (gridPath != null)
-            {
-                for (int i = 0; i < gridPath.Count; i++)
-                    AddAxisAlignedTransition(finalPath, gridPath[i]);
-            }
-            AddAxisAlignedTransition(finalPath, realEnd);
-            return RemoveVeryShortSegments(finalPath);
-        }
-
-        private void AddAxisAlignedTransition(List<XYZ> path, XYZ target)
-        {
-            if (path == null || target == null) return;
-            if (path.Count == 0)
-            {
-                path.Add(target);
-                return;
-            }
-            XYZ last = path[path.Count - 1];
-            if (last.DistanceTo(target) < 0.001) return;
-            bool sameX = Math.Abs(last.X - target.X) < 0.0001;
-            bool sameY = Math.Abs(last.Y - target.Y) < 0.0001;
-            bool sameZ = Math.Abs(last.Z - target.Z) < 0.0001;
-            if ((sameX && sameY) || (sameX && sameZ) || (sameY && sameZ))
-            {
-                path.Add(target);
-                return;
-            }
-            // Keep horizontal first and split XY into X then Y. Vertical change happens last.
-            XYZ pX = new XYZ(target.X, last.Y, last.Z);
-            XYZ pY = new XYZ(target.X, target.Y, last.Z);
-            if (last.DistanceTo(pX) > 0.001) path.Add(pX);
-            if (pX.DistanceTo(pY) > 0.001) path.Add(pY);
-            if (pY.DistanceTo(target) > 0.001) path.Add(target);
+            List<XYZ> worldPath = new List<XYZ> { realStart };
+            worldPath.AddRange(gridPath);
+            worldPath.Add(realEnd);
+            return PathUtils.MergeCollinear(worldPath);
         }
 
         private List<XYZ> CleanAxisAlignedPath(List<XYZ> path)
@@ -602,11 +562,12 @@ namespace MEPAutoRouting.Core
         public double GCost { get; set; }
         public double HCost { get; set; }
         public AStarNode Parent { get; set; }
+        public (int dx, int dy, int dz) Direction { get; set; }
         public double FCost { get { return GCost + HCost; } }
         public AStarNode(int x, int y, int z, XYZ center, string id)
         {
             X = x; Y = y; Z = z; Center = center; Id = id;
-            IsObstacle = false; GCost = double.MaxValue; HCost = 0.0; Parent = null;
+            IsObstacle = false; GCost = double.MaxValue; HCost = 0.0; Parent = null; Direction = (0, 0, 0);
         }
     }
 

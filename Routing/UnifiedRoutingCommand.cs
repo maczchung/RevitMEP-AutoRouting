@@ -26,6 +26,9 @@ namespace MEPAutoRouting
             List<PipeTypeOption> pipeTypeOptions = BuildPipeTypeOptions(doc);
             ElementId selectedPipeTypeId = pipeTypeOptions.Count > 0 ? pipeTypeOptions[0].Id : ElementId.InvalidElementId;
             double selectedPipeDiameterMm = 100.0;
+            SpaceVolume selectedSpace = null;
+            RoutingConstraints routingConstraints = null;
+            double selectedWallClearanceMm = 0;
 
             try
             {
@@ -94,9 +97,40 @@ namespace MEPAutoRouting
                     {
                         if (startPoint == null || endPoint == null) { TaskDialog.Show("Routing", "Please select both start and end."); continue; }
                         if (startPoint.DistanceTo(endPoint) < 0.01) { TaskDialog.Show("Routing", "Start and End points are too close."); continue; }
-                        if (routingBounds == null) { TaskDialog.Show("Routing", "Please select a HOST Room / Space / Mass routing volume first."); continue; }
+                        RoutingOptions options = ui.Options;
+                        try
+                        {
+                            selectedSpace = options.SpaceSource switch
+                            {
+                                SpaceSource.Host => SpacePicker.PickHost(uidoc),
+                                SpaceSource.Link => SpacePicker.PickLinked(uidoc),
+                                _ => null
+                            };
+                        }
+                        catch (InvalidOperationException ex)
+                        {
+                            TaskDialog.Show("Unified Routing", ex.Message);
+                            continue;
+                        }
+                        if (options.SpaceSource != SpaceSource.None && selectedSpace == null) continue;
+                        if (routingBounds == null && selectedSpace == null)
+                        { TaskDialog.Show("Routing", "Please select a HOST Room / Space / Mass routing volume first."); continue; }
+
+                        XYZ regionMin = selectedSpace != null ? selectedSpace.Min : routingBounds.Min;
+                        XYZ regionMax = selectedSpace != null ? selectedSpace.Max : routingBounds.Max;
+                        double diameter = UnitUtils.ConvertToInternalUnits(selectedPipeDiameterMm, UnitTypeId.Millimeters);
+                        const double cellSize = 0.5;
+                        double clearance = options.WallClearanceFt;
+                        List<WallObstacle> walls = WallObstacleCollector.Collect(doc, regionMin, regionMax, options.IncludeLinkWalls, clearance + diameter / 2.0);
+                        routingConstraints = new RoutingConstraints(selectedSpace, walls, clearance, diameter / 2.0, options.ClearanceOnSpaceBoundary);
+                        routingConstraints.AddExemptPoint(startPoint, routingConstraints.SuggestedExemptRadius(cellSize));
+                        routingConstraints.AddExemptPoint(endPoint, routingConstraints.SuggestedExemptRadius(cellSize));
+                        selectedWallClearanceMm = options.WallClearanceMm;
+                        if (selectedSpace != null && (!selectedSpace.Contains(startPoint) || !selectedSpace.Contains(endPoint)))
+                        { TaskDialog.Show("Unified Routing", "起點或終點唔喺 Space '" + selectedSpace.Name + "' 入面。"); continue; }
+                        routingBounds = CreateBounds(regionMin, regionMax);
                         if (!RoutingVolumeUtils.IsPointInsideBounds(startPoint, routingBounds) || !RoutingVolumeUtils.IsPointInsideBounds(endPoint, routingBounds))
-                        { TaskDialog.Show("Routing", "Start or End point is outside the selected HOST routing volume."); continue; }
+                        { TaskDialog.Show("Routing", "Start or End point is outside the selected routing volume."); continue; }
                         if (CurrentMode == RoutingMode.Pipe && selectedPipeTypeId == ElementId.InvalidElementId)
                         { TaskDialog.Show("Pipe Settings", "Please select a valid pipe type."); continue; }
                         keepShowingUI = false;
@@ -104,18 +138,26 @@ namespace MEPAutoRouting
                     else return Result.Cancelled;
                 }
 
-                AStarPathfinder finder = new AStarPathfinder(doc, routingBounds);
+                AStarPathfinder finder = new AStarPathfinder(doc, routingBounds, routingConstraints);
                 XYZ startDir = XYZ.BasisX;
                 if (startConnector != null && startConnector.CoordinateSystem != null) startDir = startConnector.CoordinateSystem.BasisZ;
                 List<XYZ> path = finder.FindPath(startPoint, endPoint, startDir);
 
                 if (CurrentMode == RoutingMode.Pipe)
-                    CreatePipe(doc, path, startConnector, endConnector, selectedPipeTypeId, selectedPipeDiameterMm);
+                    CreatePipe(doc, path, startConnector, endConnector, selectedPipeTypeId, selectedPipeDiameterMm, selectedSpace, selectedWallClearanceMm);
                 else
                 {
+                    if (!PathUtils.IsValid(path))
+                    {
+                        TaskDialog.Show("Unified Routing", "搵唔到可行路徑，冇建立 conduit。");
+                        return Result.Cancelled;
+                    }
                     ConduitCreator creator = new ConduitCreator(doc);
-                    creator.Create(path);
-                    TaskDialog.Show("Routing Success", "Conduit routing completed." + Environment.NewLine + "Points: " + (path == null ? 0 : path.Count));
+                    List<string> failures = new List<string>();
+                    int createdCount = creator.Create(path, failures);
+                    string failureText = failures.Count == 0 ? "None" : string.Join(Environment.NewLine, failures);
+                    string spaceText = selectedSpace == null ? "None" : selectedSpace.Name;
+                    TaskDialog.Show("Routing Success", "Conduit routing completed." + Environment.NewLine + "Points: " + path.Count + Environment.NewLine + "Created conduits: " + createdCount + Environment.NewLine + "Space: " + spaceText + Environment.NewLine + "Wall clearance(mm): " + selectedWallClearanceMm + Environment.NewLine + "Elbow failures:" + Environment.NewLine + failureText);
                 }
                 return Result.Succeeded;
             }
@@ -140,7 +182,7 @@ namespace MEPAutoRouting
             return options;
         }
 
-        private void CreatePipe(Document doc, List<XYZ> path, Connector startConnector, Connector endConnector, ElementId selectedPipeTypeId, double selectedPipeDiameterMm)
+        private void CreatePipe(Document doc, List<XYZ> path, Connector startConnector, Connector endConnector, ElementId selectedPipeTypeId, double selectedPipeDiameterMm, SpaceVolume selectedSpace = null, double wallClearanceMm = 0)
         {
             if (path == null || path.Count < 2) { TaskDialog.Show("Pipe Debug", "Path is null or has less than 2 points."); return; }
             path = PreparePathForConnectorConnection(path, startConnector, endConnector);
@@ -157,6 +199,7 @@ namespace MEPAutoRouting
 
             int createdPipeCount = 0, createdFittingCount = 0, connectedEndCount = 0;
             List<SegmentInfo> segments = new List<SegmentInfo>();
+            List<string> failures = new List<string>();
             using (Transaction transaction = new Transaction(doc, "Pipe Routing With Horizontal Path Fix"))
             {
                 transaction.Start();
@@ -175,14 +218,9 @@ namespace MEPAutoRouting
                     }
                 }
                 doc.Regenerate();
-                for (int i = 0; i < segments.Count - 1; i++)
-                {
-                    SegmentInfo a = segments[i]; SegmentInfo b = segments[i + 1];
-                    Connector ca = GetClosestUnusedConnector(a.Pipe, a.End);
-                    Connector cb = GetClosestUnusedConnector(b.Pipe, a.End);
-                    if (ca == null || cb == null) continue;
-                    if (CreatePipeFittingOrConnection(doc, ca, cb, a.Start, a.End, b.Start, b.End)) createdFittingCount++;
-                }
+                List<MEPCurve> fittingSegments = new List<MEPCurve>();
+                foreach (SegmentInfo segment in segments) fittingSegments.Add(segment.Pipe);
+                createdFittingCount = MepFittingUtils.CreateElbows(doc, fittingSegments, path, failures);
                 doc.Regenerate();
                 if (segments.Count > 0)
                 {
@@ -191,7 +229,17 @@ namespace MEPAutoRouting
                 }
                 transaction.Commit();
             }
-            TaskDialog.Show("Pipe Debug", "Pipe routing completed." + Environment.NewLine + "Path points: " + path.Count + Environment.NewLine + "Created pipes: " + createdPipeCount + Environment.NewLine + "Created fittings/connections: " + createdFittingCount + Environment.NewLine + "Connected equipment ends: " + connectedEndCount + " / 2" + Environment.NewLine + "Pipe size(mm): " + selectedPipeDiameterMm);
+            string failureText = failures.Count == 0 ? "None" : string.Join(Environment.NewLine, failures);
+            string spaceText = selectedSpace == null ? "None" : selectedSpace.Name;
+            TaskDialog.Show("Pipe Debug", "Pipe routing completed." + Environment.NewLine + "Path points: " + path.Count + Environment.NewLine + "Created pipes: " + createdPipeCount + Environment.NewLine + "Created elbows: " + createdFittingCount + Environment.NewLine + "Connected equipment ends: " + connectedEndCount + " / 2" + Environment.NewLine + "Pipe size(mm): " + selectedPipeDiameterMm + Environment.NewLine + "Space: " + spaceText + Environment.NewLine + "Wall clearance(mm): " + wallClearanceMm + Environment.NewLine + "Elbow failures:" + Environment.NewLine + failureText);
+        }
+
+        private BoundingBoxXYZ CreateBounds(XYZ min, XYZ max)
+        {
+            BoundingBoxXYZ bounds = new BoundingBoxXYZ();
+            bounds.Min = min;
+            bounds.Max = max;
+            return bounds;
         }
 
         private List<XYZ> PreparePathForConnectorConnection(List<XYZ> originalPath, Connector startConnector, Connector endConnector)
