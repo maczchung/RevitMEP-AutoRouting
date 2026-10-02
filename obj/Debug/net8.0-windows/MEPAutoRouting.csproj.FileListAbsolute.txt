@@ -19,8 +19,6 @@ L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\bin\Debug\net8.0-windows\MEPAut
 L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\bin\Debug\net8.0-windows\MEPAutoRouting.dll
 L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\bin\Debug\net8.0-windows\MEPAutoRouting.pdb
 L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\obj\Debug\net8.0-windows\MEPAutoRouting.csproj.AssemblyReference.cache
-L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\obj\Debug\net8.0-windows\Routing\UnifiedRoutingUI.baml
-L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\obj\Debug\net8.0-windows\Routing\UnifiedRoutingUI.g.cs
 L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\obj\Debug\net8.0-windows\MEPAutoRouting_MarkupCompile.cache
 L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\obj\Debug\net8.0-windows\MEPAutoRouting.g.resources
 L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\obj\Debug\net8.0-windows\MEPAutoRouting.GeneratedMSBuildEditorConfig.editorconfig

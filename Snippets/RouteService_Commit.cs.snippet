@@ -1,0 +1,62 @@
+// ===== RouteService.cs → Commit 段（取代原本 using (var tx ...) 成段）=====
+// 加 RouteRequest.SuppressWarnings（bool），由 VM 嘅 SuppressWarnings 傳入。
+
+log?.Invoke($"Creating {path.Count - 1} segments…");
+var failures = new List<string>();
+using (var tx = new Transaction(doc, "MEP Auto Route"))
+{
+    tx.Start();
+    RouteFailureCollector fc = RouteFailureCollector.Attach(tx, req.SuppressWarnings);
+
+    var segs = new List<MEPCurve>();
+    try
+    {
+        for (int i = 0; i < path.Count - 1; i++)
+        {
+            MEPCurve c = req.Discipline == RouteDiscipline.Pipe
+                ? Pipe.Create(doc, req.SystemTypeId, req.PipeTypeId, req.LevelId, path[i], path[i + 1])
+                : Conduit.Create(doc, req.PipeTypeId, path[i], path[i + 1], req.LevelId);
+
+            BuiltInParameter dp = req.Discipline == RouteDiscipline.Pipe
+                ? BuiltInParameter.RBS_PIPE_DIAMETER_PARAM : BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM;
+            c.get_Parameter(dp)?.Set(diameterFt);
+            segs.Add(c);
+        }
+    }
+    catch (Exception ex)
+    {
+        tx.RollBack();
+        res.Problems.Add(RouteProblem.Error(
+            $"Segment {segs.Count} could not be created – {ex.GetType().Name}: {ex.Message}"));
+        return res;
+    }
+    log?.Invoke($"{segs.Count} segments created, adding elbows…");
+
+    if (req.AddFittings) res.CreatedElbows = MepFittingUtils.CreateElbows(doc, segs, path, failures);
+    if (req.ConnectEnds)
+    {
+        TryConnect(segs[0], start.Connector, start.Origin, failures);
+        TryConnect(segs[^1], end.Connector, end.Origin, failures);
+    }
+
+    TransactionStatus st = tx.Commit();
+
+    foreach (string w in fc.Warnings) res.Problems.Add(RouteProblem.Warn($"Revit: {w}"));
+    foreach (string e in fc.Errors)   res.Problems.Add(RouteProblem.Error($"Revit: {e}"));
+
+    if (st != TransactionStatus.Committed)
+    {
+        res.Problems.Add(RouteProblem.Error(
+            $"Revit rolled back the transaction ({st}) – nothing was created. See the Revit errors above."));
+        return res;
+    }
+
+    res.CreatedSegments = segs.Count;
+    res.Committed = true;
+}
+foreach (string f in failures) res.Problems.Add(RouteProblem.Warn(f));
+
+// RouteRequest 加：
+// public bool SuppressWarnings { get; init; } = true;
+// public bool AddFittings { get; init; } = true;
+// public bool ConnectEnds { get; init; } = true;

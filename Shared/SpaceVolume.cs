@@ -2,38 +2,36 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Mechanical;
 
 namespace MEPAutoRouting
 {
-    /// <summary>
-    /// Space / Room 嘅 routing 範圍（world 座標）。
-    /// 用 boundary polygon 判斷，所以 L 形 / 唔規則嘅 Space 都啱，唔只係 bounding box。
-    /// Host 同 Linked model 都用得（Linked 就傳 link transform）。
-    /// </summary>
-    public sealed class SpaceVolume
+    /// <summary>Space / Room 範圍。用 boundary polygon 判斷（L 形都啱），Host / Linked 都用得。</summary>
+    public sealed class SpaceVolume : IRoutingBoundary
     {
         public string Name { get; private set; } = "";
+        public string Kind { get; private set; } = "Space";
         public bool IsFromLink { get; private set; }
-        public List<List<XYZ>> Loops { get; } = new();   // world XY polygon（第一個 loop 係外框，其餘係洞）
+        public List<List<XYZ>> Loops { get; } = new();
         public double MinZ { get; private set; }
         public double MaxZ { get; private set; }
-        public XYZ Min { get; private set; }             // world bounding box
+        public XYZ Min { get; private set; }
         public XYZ Max { get; private set; }
 
         public static SpaceVolume FromSpatialElement(SpatialElement se, Transform linkTransform = null)
         {
             if (se == null) throw new ArgumentNullException(nameof(se));
+            string kind = se is Space ? "Space" : "Room";
             if (se.Area <= 0)
-                throw new InvalidOperationException($"'{se.Name}' 未 placed 或者冇封閉邊界 (Area = 0)。");
+                throw new InvalidOperationException($"{kind} '{se.Name}' is not placed or not enclosed (area = 0).");
 
             Transform t = linkTransform ?? Transform.Identity;
 
-            // ---- 高度 (local) ----
             double localMinZ, localMaxZ;
             BoundingBoxXYZ bb = se.get_BoundingBox(null);
             if (bb != null && bb.Max.Z - bb.Min.Z > 1e-6)
             {
-                var (bmin, bmax) = BoundingBoxUtils.GetWorldBounds(bb);   // 只處理 bb.Transform，未套 link
+                var (bmin, bmax) = BoundingBoxUtils.GetWorldBounds(bb);
                 localMinZ = bmin.Z; localMaxZ = bmax.Z;
             }
             else
@@ -45,18 +43,18 @@ namespace MEPAutoRouting
                 localMaxZ = localMinZ + height;
             }
 
-            // ---- 邊界 ----
             var opt = new SpatialElementBoundaryOptions
             {
                 SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish
             };
             IList<IList<BoundarySegment>> loops = se.GetBoundarySegments(opt);
             if (loops == null || loops.Count == 0)
-                throw new InvalidOperationException($"'{se.Name}' 攞唔到邊界 (Not Enclosed?)。");
+                throw new InvalidOperationException($"Cannot read the boundary of {kind} '{se.Name}' (not enclosed?).");
 
             var vol = new SpaceVolume
             {
                 Name = $"{se.Number} - {se.Name}",
+                Kind = kind,
                 IsFromLink = linkTransform != null
             };
 
@@ -66,7 +64,7 @@ namespace MEPAutoRouting
                 foreach (BoundarySegment seg in loop)
                 {
                     IList<XYZ> pts = seg.GetCurve().Tessellate();
-                    for (int i = 0; i < pts.Count - 1; i++)          // 最後一點 = 下一段起點
+                    for (int i = 0; i < pts.Count - 1; i++)
                     {
                         XYZ w = t.OfPoint(new XYZ(pts[i].X, pts[i].Y, localMinZ));
                         poly.Add(new XYZ(w.X, w.Y, 0));
@@ -75,10 +73,9 @@ namespace MEPAutoRouting
                 if (poly.Count >= 3) vol.Loops.Add(poly);
             }
             if (vol.Loops.Count == 0)
-                throw new InvalidOperationException($"'{se.Name}' 邊界無效。");
+                throw new InvalidOperationException($"{kind} '{se.Name}' has no valid boundary.");
 
-            // Z：假設 link 冇傾斜（正常情況），只套 Z 位移
-            double zShift = t.OfPoint(XYZ.Zero).Z;
+            double zShift = t.OfPoint(XYZ.Zero).Z;   // 假設 link 冇傾斜
             vol.MinZ = localMinZ + zShift;
             vol.MaxZ = localMaxZ + zShift;
 
@@ -88,18 +85,13 @@ namespace MEPAutoRouting
             return vol;
         }
 
-        /// <summary>
-        /// 點係咪喺 Space 入面，而且離邊界最少 insetXY（例如 pipe 半徑 + 牆間距）。
-        /// </summary>
         public bool Contains(XYZ p, double insetXY = 0, double insetZ = 0)
         {
             if (p.Z < MinZ + insetZ || p.Z > MaxZ - insetZ) return false;
             if (p.X < Min.X || p.X > Max.X || p.Y < Min.Y || p.Y > Max.Y) return false;
 
-            // Even-odd rule：自動處理 Space 入面嘅洞（例如柱）
             bool inside = false;
             foreach (var poly in Loops)
-            {
                 for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
                 {
                     XYZ a = poly[i], b = poly[j];
@@ -107,33 +99,13 @@ namespace MEPAutoRouting
                         p.X < (b.X - a.X) * (p.Y - a.Y) / (b.Y - a.Y) + a.X)
                         inside = !inside;
                 }
-            }
             if (!inside) return false;
             if (insetXY <= 0) return true;
 
             foreach (var poly in Loops)
                 for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
-                    if (GeomXY.DistanceToSegment(p, poly[j], poly[i]) < insetXY) return false;
+                    if (Geom.DistanceToSegmentXY(p, poly[j], poly[i]) < insetXY) return false;
             return true;
-        }
-    }
-
-    internal static class GeomXY
-    {
-        public static double DistanceToSegment(XYZ p, XYZ a, XYZ b)
-        {
-            double dx = b.X - a.X, dy = b.Y - a.Y;
-            double len2 = dx * dx + dy * dy;
-            double t = len2 < 1e-12 ? 0 : ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / len2;
-            t = Math.Max(0, Math.Min(1, t));
-            double cx = a.X + t * dx - p.X, cy = a.Y + t * dy - p.Y;
-            return Math.Sqrt(cx * cx + cy * cy);
-        }
-
-        public static double Distance(XYZ p, XYZ q)
-        {
-            double dx = p.X - q.X, dy = p.Y - q.Y;
-            return Math.Sqrt(dx * dx + dy * dy);
         }
     }
 }

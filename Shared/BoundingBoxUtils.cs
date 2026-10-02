@@ -3,14 +3,14 @@ using Autodesk.Revit.DB;
 
 namespace MEPAutoRouting
 {
-    /// <summary>Fix #6: BoundingBoxXYZ → world axis-aligned bounds（處理 bb.Transform 同 link transform）。</summary>
+    /// <summary>BoundingBoxXYZ → world axis-aligned bounds（處理 bb.Transform 同 link transform）。</summary>
     public static class BoundingBoxUtils
     {
         public static (XYZ Min, XYZ Max) GetWorldBounds(BoundingBoxXYZ bb, Transform linkTransform = null)
         {
             if (bb == null) throw new ArgumentNullException(nameof(bb));
             Transform t = bb.Transform ?? Transform.Identity;
-            if (linkTransform != null) t = linkTransform.Multiply(t);   // link × bb
+            if (linkTransform != null) t = linkTransform.Multiply(t);
 
             double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
             double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
@@ -23,12 +23,6 @@ namespace MEPAutoRouting
                 maxX = Math.Max(maxX, p.X); maxY = Math.Max(maxY, p.Y); maxZ = Math.Max(maxZ, p.Z);
             }
             return (new XYZ(minX, minY, minZ), new XYZ(maxX, maxY, maxZ));
-        }
-
-        public static (XYZ Min, XYZ Max)? GetWorldBounds(Element e, View view = null, Transform linkTransform = null)
-        {
-            BoundingBoxXYZ bb = e?.get_BoundingBox(view);
-            return bb == null ? null : GetWorldBounds(bb, linkTransform);
         }
     }
 }

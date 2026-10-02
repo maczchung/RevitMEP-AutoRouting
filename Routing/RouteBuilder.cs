@@ -21,6 +21,7 @@ namespace MEPAutoRouting.Routing
             {
                 MEPCurve seg = factory.Create(doc, pts[i], pts[i + 1]);
                 if (o.MatchSize) factory.ApplySize(seg, s);
+                else if (o.Size.HasValue) ApplyNominalSize(seg, o.Size.Value.NominalFt, o.Discipline);
                 segments.Add(seg);
                 result.Created.Add(seg.Id);
             }
@@ -57,6 +58,15 @@ namespace MEPAutoRouting.Routing
 
             result.Success = true;
             return result;
+        }
+
+        private static void ApplyNominalSize(MEPCurve curve, double diameterFt, Discipline discipline)
+        {
+            BuiltInParameter parameter = discipline == Discipline.Conduit
+                ? BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM
+                : BuiltInParameter.RBS_PIPE_DIAMETER_PARAM;
+            Parameter size = curve?.get_Parameter(parameter);
+            if (size != null && !size.IsReadOnly && diameterFt > 0) size.Set(diameterFt);
         }
 
         private static void TryConnect(Connector equip, MEPCurve seg, XYZ at, string label,

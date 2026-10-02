@@ -10,13 +10,14 @@
 using System;
 using System.Reflection;
 
-[assembly: System.Reflection.AssemblyCompanyAttribute("MEPAutoRouting")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("Cundall HK")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("1.1.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.1.0+7afa267d0b65555925afcc471fd13f0d2953678b")]
-[assembly: System.Reflection.AssemblyProductAttribute("MEPAutoRouting")]
-[assembly: System.Reflection.AssemblyTitleAttribute("MEPAutoRouting")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.1.0.0")]
+[assembly: System.Reflection.AssemblyCopyrightAttribute("© 2026 Cundall HK. Developed by Matthew Kwok.")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.4.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.4.0+bf97b8daba46e080c08de3eb9a40765f1be65d98")]
+[assembly: System.Reflection.AssemblyProductAttribute("MEP Auto Routing")]
+[assembly: System.Reflection.AssemblyTitleAttribute("MEP Auto Routing for Revit 2025")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.4.0.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 

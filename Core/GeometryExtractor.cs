@@ -43,6 +43,7 @@ namespace MEPAutoRouting.Core
 
                 foreach (Element elem in collector)
                 {
+                    if (elem is Wall) continue;
                     BoundingBoxXYZ bb = elem.get_BoundingBox(null);
                     if (bb == null) continue;
                     var world = BoundingBoxUtils.GetWorldBounds(bb);
@@ -86,6 +87,7 @@ namespace MEPAutoRouting.Core
 
                     foreach (Element linkedElem in linkedElements)
                     {
+                        if (linkedElem is Wall) continue;
                         BoundingBoxXYZ linkBox = linkedElem.get_BoundingBox(null);
                         if (linkBox == null)
                             continue;

@@ -1,0 +1,42 @@
+// ===== 加入 MainViewModel.cs（同一個 partial class）=====
+// 將欄位名對返你 VM 實際用嘅。
+
+private partial RouteRequest BuildRouteRequest(bool commit, IRoutingBoundary boundary,
+                                               PipeSizeInfo? size, List<RouteProblem> preChecks)
+    => new RouteRequest
+    {
+        Source       = Source?.Connector,                  // 你 connector card wrapper 入面嘅 Revit Connector
+        Target       = Target?.Connector,
+        PipeTypeId   = SelectedType?.Id,                   // wrapper：SelectedType?.Element?.Id
+        SystemTypeId = SelectedSystemType?.Id,
+        LevelId      = SelectedLevel?.Id,
+        Discipline   = IsConduitDiscipline() ? RouteDiscipline.Conduit : RouteDiscipline.Pipe,
+        Options      = ConstraintOptions,                  // LeadMm 要寫入 ConstraintOptions.LeadLengthMm
+        Boundary     = boundary,
+        Size         = size,
+        PreChecks    = preChecks,
+        MinSegmentMm = MinSegmentMm,
+        Commit       = commit,
+    };
+
+private partial void ApplyRouteResult(RouteResult r)
+{
+    // 用返你原本更新 UI 嘅 code，例如：
+    PreviewPoints.Clear();
+    // foreach (...) PreviewPoints.Add(new PreviewPointVm(...));   ← 由 r.Path 建
+    Problems.Clear();
+    foreach (RouteProblem p in r.Problems) Problems.Add(p);
+    // SegmentCount / TotalLengthText / TotalFallText / ProblemSummary / ProblemCount → OnPropertyChanged
+    SelectedEditorTab = 1;                                 // 轉去 Path Preview
+}
+
+// RouteCommand / PreviewCommand 改做：
+RouteCommand   = new Shared.RelayCommand(() => ExecuteRoute(true),  () => RouteBlockedReason == null);
+PreviewCommand = new Shared.RelayCommand(() => ExecuteRoute(false), () => RouteBlockedReason == null);
+
+// ⚠ LeadMm：確保 setter 寫入 ConstraintOptions.LeadLengthMm，否則 RouteService 用唔到 UI 輸入
+public double LeadMm
+{
+    get => ConstraintOptions.LeadLengthMm;
+    set { ConstraintOptions.LeadLengthMm = value; OnPropertyChanged(); }
+}

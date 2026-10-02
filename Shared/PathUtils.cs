@@ -3,7 +3,7 @@ using Autodesk.Revit.DB;
 
 namespace MEPAutoRouting
 {
-    /// <summary>Fix #3 + #5: 路徑檢查、去重複點、合併同一直線上嘅點、6 方向 neighbour。</summary>
+    /// <summary>路徑檢查、去重複點、合併同一直線上嘅點、6 方向 neighbour。</summary>
     public static class PathUtils
     {
         public static readonly (int dx, int dy, int dz)[] SixNeighbours =
@@ -40,5 +40,7 @@ namespace MEPAutoRouting
         public static double TurnPenalty((int dx, int dy, int dz) prevDir, (int dx, int dy, int dz) newDir,
                                          double penalty = 5.0)
             => prevDir == (0, 0, 0) || prevDir == newDir ? 0 : penalty;
+
+        public static (int dx, int dy, int dz) Negate((int dx, int dy, int dz) d) => (-d.dx, -d.dy, -d.dz);
     }
 }

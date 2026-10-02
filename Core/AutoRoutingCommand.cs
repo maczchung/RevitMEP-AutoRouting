@@ -29,18 +29,19 @@ namespace MEPAutoRouting.Core
 
                 var uiapp = commandData.Application;
                 var handler = new RoutingEventHandler();
-                var exEvent = ExternalEvent.Create(handler);
-                var vm = new MainViewModel(handler, exEvent,
+                var queue = RevitActionQueue.Create();
+                var vm = new MainViewModel(handler, queue,
                                            uiapp.ActiveUIDocument?.Document?.Title ?? "-",
                                            uiapp.Application.VersionNumber);
                 handler.ViewModel = vm;
+                queue.Log += text => vm.Log(LogLevel.Error, text);
 
                 _window = new MainWindow(vm);
                 new WindowInteropHelper(_window) { Owner = uiapp.MainWindowHandle };
                 _window.Closed += (s, e) =>
                 {
                     vm.SaveSettings();
-                    exEvent.Dispose();
+                    queue.Dispose();
                     _window = null;
                 };
                 _window.Show();

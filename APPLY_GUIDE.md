@@ -1,86 +1,99 @@
-# MEPAutoRouting v2 – 套用指引 (Revit 2025 / net8.0-windows)
+# MEPAutoRouting v4.1（完整版 = v4 + v4.1 hotfix）
+
+## 包含
+| 版本 | 內容 |
+|---|---|
+| v4 | Publisher（Cundall HK · Matthew Kwok）、Calculation boundary 手動 Pick、Pipe size input、Problems 英文、Slope / wall clearance VM wrapper、Flow direction |
+| v4.1 | 修「撳 Route 冇 pipe」：Route / Preview 統一行 `RevitActionQueue`、每步寫 OUTPUT、捉 UI exception、捉 Revit rollback、檢查 script |
 
 ## 檔案放邊度
-| Package | Project |
-|---|---|
-| `MEPAutoRouting.addin`, `README_BUILD.txt`, `Deploy-Revit2025.ps1` | root（覆蓋） |
-| `Shared/RoutingFixes/*.cs` | `Shared/RoutingFixes/`（Bug fix helper） |
-| `Shared/Constraints/*.cs` | `Shared/Constraints/`（新功能） |
-| `UI/*.snippet` | **唔好 copy 入 project**，係要貼入現有檔案嘅 code |
-
-全部 class 都係 `namespace MEPAutoRouting`。SDK-style csproj 會自動 include 新 `.cs`。
-
----
-
-# Part A – Bug Fix（上次 7 項）
-
-| # | 檔案 | 改法 |
+| Package | Project | 動作 |
 |---|---|---|
-| 1 | `.addin` | 已改好：Revit 2025、`<Text>`、相對路徑 |
-| 2 | Pipe creator | elbow loop 換成 `MepFittingUtils.CreateElbows(doc, segments, path, failures)` |
-| 3 | `UnifiedRoutingCommand.cs` ~L111 | Conduit mode 加 `if (!PathUtils.IsValid(path)) { TaskDialog...; return Result.Cancelled; }` |
-| 4 | `ConduitCreator.cs` L22-31 | `MergeCollinear` → create 所有段 → 同一 transaction `CreateElbows` |
-| 5 | `AStarPathfinder.cs` | neighbour 改 `PathUtils.SixNeighbours`；g-cost 加 `TurnPenalty`；L390-425 刪 X→Y→Z 拆段，改 `MergeCollinear` |
-| 6 | `GeometryExtractor.cs` L34-58、`RoutingVolumeUtils.cs` L18-30 | 改用 `BoundingBoxUtils.GetWorldBounds(bb, linkTransform)`；刪除重複套 link transform |
-| 7 | `.csproj` | 冇用到就刪 `DetailAPI` Reference；RevitAPI/RevitAPIUI `Private=False` |
+| `Shared/**/*.cs` | 同名檔案 | **覆蓋**（如果 Copilot 搬咗位置，覆蓋嗰個；唔好留兩份） |
+| `UI/MainWindow.xaml`、`UI/MainWindow.xaml.cs` | `UI/` | **覆蓋** |
+| `UI/ViewModels/MainViewModel.Constraints.cs`、`MainViewModel.Route.cs` | `UI/ViewModels/` | 新增（partial class） |
+| `Deploy-Revit2025.ps1` | root | 覆蓋 |
+| `Tools/Check-Project.ps1` | `Tools/` | 新增 |
+| `Snippets/*` | — | 貼入現有檔案 |
+| `Reference/RouteService.reference.cs.txt` | — | **唔好覆蓋**，只 merge `[v4-x]` / `[v4.1-x]` |
 
 ---
 
-# Part B – 新功能
+## Step 1：行檢查 script（先做）
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Tools\Check-Project.ps1
+```
+- `[DUP]`：同一個 class 有兩份 → 刪舊嗰份
+- `[OLD] SpacePicker`：刪除
+- 中文字串：改英文（你上次 OUTPUT 出嘅 `Slope % 要喺 0 – 20 之間` 就係舊 `SlopeSettings.cs`）
+- `RoutingEventHandler` / `.Raise()`：記低位置，Step 3 用
 
-## 功能 1：牆間距 (Wall clearance)
-- 淨距定義：**牆面 → 管外皮**
-- 內部計法：cell 中心去牆中心線距離 < `牆厚/2 + 間距 + 管半徑` 就 block
-- 用中心線計，所以**斜牆 / 弧形牆都準**（唔會好似 bounding box 咁 block 咗成個長方形）
-- 牆頂以上（例如天花 void 入面）唔受影響
-- 起點 / 終點附近有 exempt 半徑，貼牆潔具嘅 connector 都行得出嚟
-- Host + Linked model 嘅牆都計（可以用 checkbox 關）
-- 上次輸入會記低（`settings.json`）
+## Step 2：覆蓋 / 新增檔案
+照上面檔案表。
 
-## 功能 2：Space / Room 用 Linked model
-- 揀 Host 或 Linked model 嘅 **Space（MEP）或 Room（Architecture）**
-- 用 boundary polygon 判斷，**L 形 Space 都啱**，唔係淨係用 bounding box
-- Link 已經套 `GetTotalTransform()`
-- 可選：Space 邊界都留同樣間距
-- 後備方案：`SpacePicker.GetAllLinkedSpaces(doc)` 可以放入 ComboBox 俾用戶揀
+## Step 3：MainViewModel
+跟 `Snippets/MainViewModel_hooks.cs.snippet`：
+1. class 加 `partial`
+2. 實作 6 個 hook：`Notify`、`GetSelectedTypeId`、`IsConduitDiscipline`、`GetSelectedPipingSystemType`、`BuildRouteRequest`、`ApplyRouteResult`
+3. Constructor 最尾：`ActionQueue = queue; InitConstraintUi();`
+4. `RouteCommand` / `PreviewCommand` 改做 `ExecuteRoute(true / false)`
+5. **唔好再 Raise 舊 `RoutingEventHandler`**
+6. `LeadMm` 寫入 `ConstraintOptions.LeadLengthMm`
+7. 刪除舊有 `SlopeText`、`BoundaryText`、`OnSystemTypeChanged`、Boundary 相關 member
 
-## Step 1 – UI (`UnifiedRoutingUI.xaml` / `.xaml.cs`)
-- 貼 `UI/UnifiedRoutingUI_Constraints.xaml.snippet` 入 XAML（Run button 上面）
-- 貼 `UI/UnifiedRoutingUI_Constraints.cs.snippet` 入 code-behind
-  - Constructor `InitializeComponent()` 之後 call `LoadConstraintOptions()`
-  - Run/OK handler 入面 `if (!ReadConstraintOptions()) return;` 先至 `DialogResult = true`
+## Step 4：RouteService
+跟 `Reference/RouteService.reference.cs.txt` merge 所有 `[v4-x]` 同 `[v4.1-x]`。重點：
+- Commit 段用 `RouteFailureCollector` + 檢查 `TransactionStatus.Committed`
+- 每一步寫 log
+- 每個 early `return res;` 之前都要有 `RouteProblem.Error(...)`
 
-## Step 2 – Command (`UnifiedRoutingCommand.cs`)
-貼 `UI/UnifiedRoutingCommand_Integration.cs.snippet`，放喺 `ShowDialog() == true` 之後、建 VoxelGrid 之前。
-改返以下 placeholder 做你原本嘅變數：`volumeMin`、`volumeMax`、`diameter`、`cellSize`、`startPoint`、`endPoint`。
+## Step 5：Strategy
+Routing Options 仲有 "Horizontal X → Y"（舊 L 形）。確認揀任何 Strategy 都會行 `AStarPathfinder.FindPath`。
 
-> ⚠️ `PickObject` 一定要喺 modal window 關咗之後先 call，否則會出 exception。
+## Step 6：Publisher
+- `.addin`：`Snippets/addin_publisher.snippet.xml`
+- `.csproj`：`Snippets/csproj_publisher.snippet.xml`
 
-## Step 3 – VoxelGrid (`VoxelGrid.cs`)
-- 貼 `UI/VoxelGrid_ApplyConstraints.cs.snippet`，改返欄位名（`NX/NY/NZ`、`Blocked`、`CellToWorld`）
-- 原本用 bbox block 牆嘅地方加 `if (e is Wall) continue;`（牆改由 constraints 處理）
+> Revit "Unsigned Add-in" 對話框嘅 Publisher 讀 code signing 證書，唔係 `.addin`。要顯示 Cundall HK 就要搵 IT 攞證書簽 DLL。
 
-## Step 4 – cellSize 建議
-間距要大過 cellSize 先有效果。例如間距 50 mm，cellSize 最好 ≤ 50 mm。
-Grid 太細會慢，所以用 Space 限制範圍會快好多。
-
----
-
-# Revit 設定：揀唔到 Linked Space / Room？
-1. V/G → **Revit Links** → 揀個 link → **Display Settings** → **Custom**
-2. **Model Categories** → Spaces（或 Rooms）→ 剔 **Interior** 同 **Reference**
-3. 喺 Plan view 將 mouse 放喺 Space 邊線 / 十字位置，按 **Tab** 切換到 linked Space 再 click
-4. 仍然揀唔到就改用 `GetAllLinkedSpaces()` + ComboBox
+## Step 7：Build + Deploy
+```powershell
+dotnet build -c Release
+powershell -ExecutionPolicy Bypass -File .\Deploy-Revit2025.ps1
+```
 
 ---
 
-# 測試清單
-- [ ] `dotnet build -c Release` → 0 error / 0 warning
-- [ ] 牆間距 0 / 50 / 100 mm：管同牆面距離正確（Measure 量淨距）
-- [ ] 斜牆：管唔會被推到好遠
-- [ ] 潔具貼牆：起點行得出嚟
-- [ ] Host Space：L 形 Space 入面唔會 route 出去
-- [ ] Linked Space：位置正確（link 有移位 / 旋轉都要試）
-- [ ] 起點 / 終點唔喺 Space → 顯示提示
-- [ ] Space Not Enclosed → 顯示提示
-- [ ] Pipe / Conduit 轉角 elbow 接好
+## 撳 Route 之後應該見到嘅 OUTPUT
+```
+[info] ▶ Route clicked
+[info] Route queued…
+[info] Route: Revit handler started.
+[info] Start · route Ø40 mm · lead 150 mm
+[info] Region … mm (Space 1 - Space 1)
+[info] Grid … cells @ 50 mm
+[info] Grid ready · … cells blocked by constraints · … walls
+[info] A* finished · … points
+[info] Path … points · slope 1:100 (1 %) · fall … mm
+[info] Creating … segments…
+[info] … segments created, adding elbows…
+[done] Created … segments and … elbows (… warning(s)).
+```
+斷咗喺邊一行，就係嗰一步有問題。將 OUTPUT、PROBLEMS 同 Check script 結果貼返上嚟。
+
+## 你截圖見到嘅其他位
+- **Space 1 高 1278 mm**：扣埋管半徑同牆間距，可行空間好窄；出 "No path found" 就加高 Space 嘅 Upper Limit / Limit Offset
+- **Slope 1 %，Target（Pump）比 Source 高**：Flow = Source → Target 會出 "rises in the flow direction" warning，正常
+
+---
+
+## 測試清單
+- [ ] Check-Project.ps1：冇 `[DUP]`、冇中文字串、`TransactionStatus.Committed` OK
+- [ ] 撳 Route：OUTPUT 逐行出到 `Created … segments`
+- [ ] Revit Undo list 見到 "MEP Auto Route"
+- [ ] 故意揀錯 System Type：PROBLEMS 出 `Revit: …` error，唔會靜靜雞
+- [ ] About pane / status bar 見到 Cundall HK · Matthew Kwok
+- [ ] Pick / Pick linked boundary：卡片資料正確；Esc 出 "Boundary pick cancelled."
+- [ ] Size 打 110（list 冇）：自動改 100 並出 warning
+- [ ] 揀 Sanitary：Apply slope 即時剔上；1:40 轉 % 變 2.5
+- [ ] PROBLEMS：Error 紅、Warning 黃，全部英文
