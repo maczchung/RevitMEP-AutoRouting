@@ -113,10 +113,16 @@ namespace MEPAutoRouting.Routing
         public bool AddFittings { get; set; } = true;
         public bool ConnectEnds { get; set; } = true;
         public bool SuppressWarnings { get; set; } = true;
+        public PipeSizeInfo? Size { get; set; }
     }
 
     public class RouteResult
     {
+        public List<XYZ> Path { get; set; } = new List<XYZ>();
+        public List<RouteProblem> Problems { get; } = new List<RouteProblem>();
+        public int CreatedSegments { get; set; }
+        public int CreatedElbows { get; set; }
+        public bool Committed { get; set; }
         public List<ElementId> Created { get; } = new List<ElementId>();
         public int Segments { get; set; }
         public int Fittings { get; set; }
@@ -128,6 +134,7 @@ namespace MEPAutoRouting.Routing
     {
         public ElementId Id { get; set; }
         public string Name { get; set; }
+        public Element Element { get; set; }
         public double Elevation { get; set; }   // for levels (ft)
         public override string ToString() => Name;
     }

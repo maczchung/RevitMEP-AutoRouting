@@ -1,0 +1,7 @@
+<!-- ===== MEPAutoRouting.csproj：加入第一個 <PropertyGroup> 入面 ===== -->
+<Company>Cundall HK</Company>
+<Authors>Matthew Kwok</Authors>
+<Product>MEP Auto Routing</Product>
+<Copyright>© 2026 Cundall HK. Developed by Matthew Kwok.</Copyright>
+<AssemblyTitle>MEP Auto Routing for Revit 2025</AssemblyTitle>
+<Version>1.4.1</Version>

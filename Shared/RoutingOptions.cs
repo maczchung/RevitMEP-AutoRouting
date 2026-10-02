@@ -5,25 +5,24 @@ using System.Text.Json;
 
 namespace MEPAutoRouting
 {
-    public enum SpaceSource { None, Host, Link }
-
-    /// <summary>UI 設定（mm）。會記低上次輸入，放喺 %AppData%\MEPAutoRouting\settings.json。</summary>
+    /// <summary>UI 設定（mm），記低喺 %AppData%\MEPAutoRouting\settings.json。</summary>
     public sealed class RoutingOptions
     {
         public double WallClearanceMm { get; set; } = 50;
         public bool IncludeLinkWalls { get; set; } = true;
-        public bool ClearanceOnSpaceBoundary { get; set; } = true;
-        public SpaceSource SpaceSource { get; set; } = SpaceSource.None;
+        public bool ClearanceOnBoundary { get; set; } = true;
+        public double LeadLengthMm { get; set; } = 150;
+        public double PipeSizeMm { get; set; } = 0;      // 0 = 未設定
+        public SlopeSettings Slope { get; set; } = new();
 
-        public double WallClearanceFt => RoutingConstraints.MmToFeet(WallClearanceMm);
-
-        public static bool TryParseMm(string text, out double mm, out string error)
+        public static bool TryParseMm(string text, double min, double max, string label,
+                                      out double mm, out string error)
         {
             error = null;
             if (!double.TryParse(text?.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out mm))
-            { error = "牆間距要輸入數字 (mm)。"; return false; }
-            if (mm < 0 || mm > 2000)
-            { error = "牆間距要喺 0 – 2000 mm 之間。"; return false; }
+            { error = $"{label} must be a number (mm)."; return false; }
+            if (mm < min || mm > max)
+            { error = $"{label} must be between {min} and {max} mm."; return false; }
             return true;
         }
 
@@ -38,7 +37,7 @@ namespace MEPAutoRouting
                 if (File.Exists(FilePath))
                     return JsonSerializer.Deserialize<RoutingOptions>(File.ReadAllText(FilePath)) ?? new();
             }
-            catch { /* 壞咗就用預設 */ }
+            catch { }
             return new RoutingOptions();
         }
 
@@ -49,7 +48,7 @@ namespace MEPAutoRouting
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
                 File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
             }
-            catch { /* 寫唔到唔影響 routing */ }
+            catch { }
         }
     }
 }

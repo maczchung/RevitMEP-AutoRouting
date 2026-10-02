@@ -29,18 +29,31 @@ namespace MEPAutoRouting.Core
 
                 var uiapp = commandData.Application;
                 var handler = new RoutingEventHandler();
-                var exEvent = ExternalEvent.Create(handler);
-                var vm = new MainViewModel(handler, exEvent,
+                var queue = RevitActionQueue.Create();
+                var vm = new MainViewModel(handler, queue,
                                            uiapp.ActiveUIDocument?.Document?.Title ?? "-",
                                            uiapp.Application.VersionNumber);
                 handler.ViewModel = vm;
-
                 _window = new MainWindow(vm);
+                Action<string> onLog = text =>
+                {
+                    try
+                    {
+                        _window.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            try { vm.Log(LogLevel.Error, text); }
+                            catch (Exception ex) { RevitActionQueue.WriteErrorFile("VM log handler failed – " + ex.Message, ex); }
+                        }));
+                    }
+                    catch (Exception ex) { RevitActionQueue.WriteErrorFile("Could not post queue log to UI – " + ex.Message, ex); }
+                };
+                queue.Log += onLog;
                 new WindowInteropHelper(_window) { Owner = uiapp.MainWindowHandle };
                 _window.Closed += (s, e) =>
                 {
+                    queue.Log -= onLog;
                     vm.SaveSettings();
-                    exEvent.Dispose();
+                    queue.Dispose();
                     _window = null;
                 };
                 _window.Show();

@@ -1,31 +1,22 @@
 # 貼入 VS Code GitHub Copilot（Agent mode）
 
 ```
-我已加入 Shared/RoutingFixes/ 同 Shared/Constraints/ 入面嘅 helper class
-(MepFittingUtils, BoundingBoxUtils, PathUtils, SpaceVolume, SpacePicker,
-WallObstacle, WallObstacleCollector, RoutingConstraints, RoutingOptions)，
-全部係 namespace MEPAutoRouting。唔好改呢啲 helper。
+套用 MEPAutoRouting v4.2 crash fix（跟 APPLY_GUIDE.md）。
+Revit journal 顯示：RevitActionQueue.Execute → AutoRoutingCommand 嘅 queue.Log lambda →
+MainViewModel.Log → LogEntries.Add → MainWindow CollectionChanged → OutputList.ScrollIntoView
+throw "An ItemsControl is inconsistent with its items source"，exception 走出 ExternalEvent，Revit crash。
 
-請跟 APPLY_GUIDE.md 修改現有 code：
+1. 用 package 檔案覆蓋：Shared/Revit/RevitActionQueue.cs、Shared/Routing/PipeSizeCatalog.cs、
+   UI/MainWindow.xaml.cs、UI/ViewModels/MainViewModel.Constraints.cs、UI/ViewModels/MainViewModel.Route.cs
+   （如果 project 入面位置唔同，覆蓋 project 用緊嗰份，唔好留兩份）。
+2. Core/AutoRoutingCommand.cs：跟 Snippets/AutoRoutingCommand.cs.snippet 修改 queue.Log 訂閱
+   （BeginInvoke + try-catch + window.Closed 取消訂閱）。
+3. MainViewModel.cs：跟 Snippets/MainViewModel_changes.cs.snippet —— constructor 刪除
+   InitConstraintUi()；Log() 喺非 UI thread 用 BeginInvoke；刪除 VM 入面任何 queue.Log += 訂閱。
+4. 全 project 搜尋 `_uiDispatcher.Invoke(` / `Dispatcher.Invoke(`：由 ExternalEvent 返 UI 嘅地方
+   改做 BeginInvoke（或者 PostToUi）。列出改咗邊度。
+5. 全 project 搜尋 `ScrollIntoView`：唔可以喺 CollectionChanged 入面同步 call。
 
-Part A (Bug fix)
-1. Pipe creator：elbow loop 換成 MepFittingUtils.CreateElbows。
-2. UnifiedRoutingCommand.cs：Conduit mode 用 PathUtils.IsValid 檢查空路徑。
-3. ConduitCreator.cs：guard 空路徑、MergeCollinear、同一 transaction CreateElbows。
-4. AStarPathfinder.cs：用 PathUtils.SixNeighbours、加 TurnPenalty、
-   刪除 X→Y→Z 拆段改用 MergeCollinear。
-5. GeometryExtractor.cs / RoutingVolumeUtils.cs：用 BoundingBoxUtils.GetWorldBounds。
-6. csproj：冇用就刪 DetailAPI；RevitAPI/RevitAPIUI Private=False。
-
-Part B (新功能)
-7. UnifiedRoutingUI.xaml / .xaml.cs：套用 UI/UnifiedRoutingUI_Constraints.*.snippet。
-8. UnifiedRoutingCommand.cs：套用 UI/UnifiedRoutingCommand_Integration.cs.snippet，
-   將 placeholder (volumeMin, volumeMax, diameter, cellSize, startPoint, endPoint)
-   對返現有變數；PickObject 要喺 dialog 關咗之後。
-9. VoxelGrid.cs：套用 UI/VoxelGrid_ApplyConstraints.cs.snippet，對返欄位名；
-   原本用 bbox block 牆嘅 code 跳過 Wall。
-10. 完成訊息顯示：elbow 失敗清單、Space 名、牆間距 mm。
-
-保留原本變數名同 public API。改完跑 dotnet build -c Release，
-要求 0 error 0 warning，列出每個改動嘅 file 同行號。
+改完 dotnet build -c Release，要 0 error 0 warning，列出改動嘅 file / 行號。
 ```
+do

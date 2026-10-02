@@ -20,6 +20,8 @@ namespace MEPAutoRouting.Core
         private readonly Document _doc;
         private readonly BoundingBoxXYZ _routingBounds;
         private readonly RoutingConstraints _constraints;
+        private ConnectorEndpoint _startEndpoint;
+        private ConnectorEndpoint _endEndpoint;
 
         private const double GridSize = 0.5;                 // feet, approx. 152 mm
         private const int MarginCells = 12;
@@ -198,6 +200,15 @@ namespace MEPAutoRouting.Core
             }
         }
 
+        public List<XYZ> FindPath(XYZ start, XYZ end, XYZ startDir,
+                                  ConnectorEndpoint startEndpoint, ConnectorEndpoint endEndpoint)
+        {
+            _startEndpoint = startEndpoint;
+            _endEndpoint = endEndpoint;
+            try { return FindPath(start, end, startDir); }
+            finally { _startEndpoint = null; _endEndpoint = null; }
+        }
+
         private void ShowFailureDebug(string title, ObstacleResult obstacleResult, int iterations)
         {
             TaskDialog.Show(
@@ -350,6 +361,9 @@ namespace MEPAutoRouting.Core
                 int nx = node.X + direction.dx;
                 int ny = node.Y + direction.dy;
                 int nz = node.Z + direction.dz;
+                if (node.Parent == null && _startEndpoint != null &&
+                    !AStarDirectionRules.IsAllowedFirstMove(direction, _startEndpoint))
+                    continue;
                 XYZ center = new XYZ(box.Min.X + nx * GridSize, box.Min.Y + ny * GridSize, box.Min.Z + nz * GridSize);
                 if (!IsInsideBox(center, box.Min, box.Max))
                     continue;
@@ -357,6 +371,10 @@ namespace MEPAutoRouting.Core
                     continue;
 
                 string id = GetNodeId(nx, ny, nz);
+                if (_endEndpoint != null && nx == GetNodeIdForPoint(end, box).X &&
+                    ny == GetNodeIdForPoint(end, box).Y && nz == GetNodeIdForPoint(end, box).Z &&
+                    !AStarDirectionRules.IsAllowedGoalEntry(direction, _endEndpoint))
+                    continue;
                 AStarNode existing;
                 if (!grid.TryGetValue(id, out existing))
                 {
@@ -522,6 +540,13 @@ namespace MEPAutoRouting.Core
         private string GetNodeId(int x, int y, int z)
         {
             return x + "," + y + "," + z;
+        }
+
+        private (int X, int Y, int Z) GetNodeIdForPoint(XYZ point, SearchBox box)
+        {
+            return ((int)Math.Round((point.X - box.Min.X) / GridSize),
+                    (int)Math.Round((point.Y - box.Min.Y) / GridSize),
+                    (int)Math.Round((point.Z - box.Min.Z) / GridSize));
         }
     }
 

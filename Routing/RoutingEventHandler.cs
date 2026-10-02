@@ -44,7 +44,7 @@ namespace MEPAutoRouting.Routing
                     case RoutingRequest.PickSource: Pick(uidoc, vm, true); break;
                     case RoutingRequest.PickTarget: Pick(uidoc, vm, false); break;
                     case RoutingRequest.LoadTypes: LoadTypes(doc, vm); break;
-                    case RoutingRequest.Preview: Preview(doc, vm); break;
+                    case RoutingRequest.Preview: Preview(uidoc, vm); break;
                     case RoutingRequest.Route: Route(uidoc, vm); break;
                 }
             }
@@ -90,7 +90,7 @@ namespace MEPAutoRouting.Routing
         {
             List<TypeItem> Types<T>() where T : Element =>
                 new FilteredElementCollector(doc).OfClass(typeof(T))
-                    .Select(x => new TypeItem { Id = x.Id, Name = x.Name })
+                    .Select(x => new TypeItem { Id = x.Id, Name = x.Name, Element = x })
                     .OrderBy(x => x.Name).ToList();
 
             List<TypeItem> types, systems = new List<TypeItem>();
@@ -108,7 +108,7 @@ namespace MEPAutoRouting.Routing
 
             var levels = new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>()
                 .OrderBy(l => l.ProjectElevation)
-                .Select(l => new TypeItem { Id = l.Id, Name = l.Name, Elevation = l.ProjectElevation })
+                .Select(l => new TypeItem { Id = l.Id, Name = l.Name, Elevation = l.ProjectElevation, Element = l })
                 .ToList();
 
             vm.SetTypes(types, systems, levels, doc.ActiveView?.GenLevel?.Id);
@@ -116,8 +116,9 @@ namespace MEPAutoRouting.Routing
         }
 
         // ------------------------------------------------------------------ plan
-        private static List<XYZ> PlanPath(Document doc, MainViewModel vm, RouteOptions o, List<string> problems)
+        private static RoutePlan PlanPath(UIDocument uidoc, MainViewModel vm, RouteOptions o)
         {
+            Document doc = uidoc.Document;
             if (vm.Source == null || vm.Target == null)
                 throw new InvalidOperationException("Pick both SOURCE and TARGET connectors first.");
             if (vm.Source.OwnerId == vm.Target.OwnerId && vm.Source.ConnectorId == vm.Target.ConnectorId)
@@ -125,16 +126,29 @@ namespace MEPAutoRouting.Routing
 
             var level = doc.GetElement(o.LevelId) as Level;
             double levelZ = level?.ProjectElevation ?? 0;
-            return RoutePlanner.Plan(vm.Source, vm.Target, o, levelZ, problems);
+            var inputs = vm.GetConstraintInputs();
+            RouteRequest request = new RouteRequest
+            {
+                Source = vm.Source,
+                Target = vm.Target,
+                Boundary = inputs.Boundary,
+                Options = vm.ConstraintOptions,
+                Size = inputs.Size,
+                PreChecks = inputs.PreChecks,
+                MinSegmentMm = vm.MinSegmentMm
+            };
+            o.Size = request.Size;
+            RoutePlan plan = RouteService.Plan(doc, request.Source, request.Target, o, levelZ, request.Options, request.Boundary, request.Size, request.MinSegmentMm);
+            plan.Problems.InsertRange(0, request.PreChecks);
+            return plan;
         }
 
-        private static void Preview(Document doc, MainViewModel vm)
+        private static void Preview(UIDocument uidoc, MainViewModel vm)
         {
             var o = vm.BuildOptions();
-            var problems = new List<string>();
-            var pts = PlanPath(doc, vm, o, problems);
-            vm.SetPreview(pts, problems);
-            vm.Log(LogLevel.Info, $"Preview: {pts.Count - 1} segments, {problems.Count} problem(s).");
+            RoutePlan plan = PlanPath(uidoc, vm, o);
+            vm.SetPreview(plan.Points, plan.Problems);
+            vm.Log(LogLevel.Info, $"Preview: {plan.Points.Count - 1} segments, {plan.Problems.Count} problem(s).");
         }
 
         // ------------------------------------------------------------------ route
@@ -148,9 +162,14 @@ namespace MEPAutoRouting.Routing
                 throw new InvalidOperationException("Select a system type.");
             if (o.LevelId == ElementId.InvalidElementId) throw new InvalidOperationException("Select a reference level.");
 
-            var problems = new List<string>();
-            var pts = PlanPath(doc, vm, o, problems);
-            vm.SetPreview(pts, problems);
+            RoutePlan plan = PlanPath(uidoc, vm, o);
+            vm.SetPreview(plan.Points, plan.Problems);
+            if (PathValidator.HasErrors(plan.Problems))
+            {
+                vm.Log(LogLevel.Error, "Route blocked: resolve the Error problems first.");
+                vm.Status = "Route blocked";
+                return;
+            }
 
             using var tx = new Transaction(doc, "MEP Auto Route");
             var swallower = new WarningSwallower();
@@ -165,7 +184,7 @@ namespace MEPAutoRouting.Routing
             RouteResult res;
             try
             {
-                res = RouteBuilder.Build(doc, vm.Source, vm.Target, pts, o, vm.Log);
+                res = RouteBuilder.Build(doc, vm.Source, vm.Target, plan.Points, o, vm.Log);
             }
             catch
             {

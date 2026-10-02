@@ -6,23 +6,25 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
 using MEPAutoRouting.Routing;
 using MEPAutoRouting.Shared;
 
 namespace MEPAutoRouting.UI.ViewModels
 {
-    public class MainViewModel : ObservableObject
+    public partial class MainViewModel : ObservableObject
     {
         private readonly RoutingEventHandler _handler;
-        private readonly ExternalEvent _event;
+        private readonly RevitActionQueue _queue;
         private readonly Dispatcher _dispatcher;
         private readonly UserSettings _settings;
+        public RoutingOptions ConstraintOptions { get; } = RoutingOptions.Load();
 
-        public MainViewModel(RoutingEventHandler handler, ExternalEvent exEvent, string docTitle, string revitVersion)
+        public MainViewModel(RoutingEventHandler handler, RevitActionQueue queue, string docTitle, string revitVersion)
         {
             _handler = handler;
-            _event = exEvent;
+            _queue = queue;
             _dispatcher = Dispatcher.CurrentDispatcher;
             _documentTitle = docTitle;
             RevitVersion = $"Revit {revitVersion}";
@@ -45,13 +47,15 @@ namespace MEPAutoRouting.UI.ViewModels
             PickSourceCommand = new RelayCommand(() => Raise(RoutingRequest.PickSource), () => !IsBusy);
             PickTargetCommand = new RelayCommand(() => Raise(RoutingRequest.PickTarget), () => !IsBusy);
             SwapCommand       = new RelayCommand(Swap, () => Source != null || Target != null);
-            PreviewCommand    = new RelayCommand(() => Raise(RoutingRequest.Preview), () => CanPlan);
-            RouteCommand      = new RelayCommand(() => Raise(RoutingRequest.Route), () => CanPlan && SelectedType != null);
+            PreviewCommand    = new RelayCommand(() => ExecuteRoute(false), () => RouteBlockedReason == null);
+            RouteCommand      = new RelayCommand(() => ExecuteRoute(true), () => RouteBlockedReason == null && SelectedType != null);
             ReloadCommand     = new RelayCommand(RequestLoadTypes, () => !IsBusy);
             ClearCommand      = new RelayCommand(ClearSelection);
             ClearLogCommand   = new RelayCommand(() => LogEntries.Clear());
             CopyLogCommand    = new RelayCommand(CopyLog);
-            ResetCommand      = new RelayCommand(() => { ApplySettings(new UserSettings()); RequestLoadTypes(); Log(LogLevel.Info, "Settings reset to defaults."); });
+            ResetCommand      = new RelayCommand(() => { ApplySettings(new UserSettings()); ResetConstraintUi(); RequestLoadTypes(); Log(LogLevel.Info, "Settings reset to defaults."); });
+
+            ActionQueue = queue;
 
             Log(LogLevel.Info, $"MEP Auto Routing {AppVersion} started · {RevitVersion}");
         }
@@ -171,8 +175,18 @@ namespace MEPAutoRouting.UI.ViewModels
         public bool IsElevationMode => Strategy == RouteStrategy.AtElevation;
         public string StrategyDescription => Strategies.First(s => s.Value == Strategy).Description;
 
-        private double _leadMm, _elevationMm, _minSegmentMm;
-        public double LeadMm       { get => _leadMm;       set => Set(ref _leadMm, Math.Max(0, value)); }
+        private double _elevationMm, _minSegmentMm;
+        public double LeadMm
+        {
+            get => ConstraintOptions.LeadLengthMm;
+            set
+            {
+                double next = Math.Max(0, value);
+                if (Math.Abs(ConstraintOptions.LeadLengthMm - next) < 1e-9) return;
+                ConstraintOptions.LeadLengthMm = next;
+                OnPropertyChanged(nameof(LeadMm));
+            }
+        }
         public double ElevationMm  { get => _elevationMm;  set => Set(ref _elevationMm, value); }
         public double MinSegmentMm { get => _minSegmentMm; set => Set(ref _minSegmentMm, Math.Max(0, value)); }
 
@@ -217,19 +231,25 @@ namespace MEPAutoRouting.UI.ViewModels
             _settings.MatchSize = MatchSize; _settings.AddFittings = AddFittings; _settings.ConnectEnds = ConnectEnds;
             _settings.SuppressWarnings = SuppressWarnings; _settings.SelectAfterRoute = SelectAfterRoute; _settings.Topmost = Topmost;
             _settings.Save();
+            ConstraintOptions.Save();
         }
 
         // ================================================================ preview / summary
         public ObservableCollection<PathPointItem> PreviewPoints { get; } = new();
-        public ObservableCollection<LogEntry> Problems { get; } = new();
+        public ObservableCollection<RouteProblem> Problems { get; } = new();
 
         private int _segmentCount;
+        private double _totalFallFt;
         public int SegmentCount { get => _segmentCount; private set => Set(ref _segmentCount, value); }
 
         private string _totalLengthText = "0 mm";
         public string TotalLengthText { get => _totalLengthText; private set => Set(ref _totalLengthText, value); }
 
         public int ProblemCount => Problems.Count;
+        public int ErrorCount => Problems.Count(p => p.IsError);
+        public int WarningCount => Problems.Count(p => !p.IsError);
+        public string ProblemSummary => $"{ErrorCount} error · {WarningCount} warning";
+        public string TotalFallText => $"{UnitConv.Mm(_totalFallFt)} mm";
 
         private int _selectedEditorTab;
         public int SelectedEditorTab { get => _selectedEditorTab; set => Set(ref _selectedEditorTab, value); }
@@ -237,9 +257,10 @@ namespace MEPAutoRouting.UI.ViewModels
         private int _selectedPanelTab = 1;
         public int SelectedPanelTab { get => _selectedPanelTab; set => Set(ref _selectedPanelTab, value); }
 
-        public void SetPreview(IList<XYZ> pts, List<string> problems)
+        public void SetPreview(IList<XYZ> pts, IList<RouteProblem> problems)
         {
             PreviewPoints.Clear();
+            _totalFallFt = pts == null || pts.Count < 2 ? 0 : Math.Abs(pts[0].Z - pts[pts.Count - 1].Z);
             double total = 0;
             for (int i = 0; i < pts.Count; i++)
             {
@@ -257,8 +278,14 @@ namespace MEPAutoRouting.UI.ViewModels
             }
 
             Problems.Clear();
-            foreach (var p in problems) Problems.Add(new LogEntry { Level = LogLevel.Warn, Message = p });
+            foreach (RouteProblem problem in problems) Problems.Add(problem);
             OnPropertyChanged(nameof(ProblemCount));
+            OnPropertyChanged(nameof(ErrorCount));
+            OnPropertyChanged(nameof(WarningCount));
+            OnPropertyChanged(nameof(ProblemSummary));
+            OnPropertyChanged(nameof(SlopeText));
+            OnPropertyChanged(nameof(TotalFallText));
+            OnPropertyChanged(nameof(BoundaryText));
             if (problems.Count > 0) SelectedPanelTab = 0;
 
             UpdateSummary(pts.Count - 1, total);
@@ -282,7 +309,12 @@ namespace MEPAutoRouting.UI.ViewModels
                 if (LogEntries.Count > 500) LogEntries.RemoveAt(0);
                 if (level != LogLevel.Info) Status = message.Length > 80 ? message.Substring(0, 80) + "…" : message;
             }
-            if (_dispatcher.CheckAccess()) add(); else _dispatcher.Invoke(add);
+            if (_dispatcher.CheckAccess()) add();
+            else
+            {
+                try { _dispatcher.BeginInvoke(new Action(add)); }
+                catch (Exception ex) { RevitActionQueue.WriteErrorFile("Could not post VM log to UI – " + ex.Message, ex); }
+            }
         }
 
         // ================================================================ commands
@@ -303,9 +335,8 @@ namespace MEPAutoRouting.UI.ViewModels
         {
             if (IsBusy) return;
             _handler.Request = request;
-            var r = _event.Raise();
-            if (r != ExternalEventRequest.Accepted)
-                Log(LogLevel.Warn, $"Revit is busy ({r}). Finish the current command and try again.");
+            if (!_queue.Enqueue(request.ToString(), app => _handler.Execute(app)))
+                Log(LogLevel.Warn, "Revit is busy. Finish the current command and try again.");
         }
 
         private void Swap()
@@ -328,6 +359,68 @@ namespace MEPAutoRouting.UI.ViewModels
         {
             try { Clipboard.SetText(string.Join(Environment.NewLine, LogEntries.Select(l => l.ToString()))); Status = "Output copied to clipboard"; }
             catch { /* clipboard locked */ }
+        }
+
+        private partial void Notify(string propertyName) => OnPropertyChanged(propertyName);
+
+        private partial ElementId GetSelectedTypeId()
+            => SelectedType?.Id ?? ElementId.InvalidElementId;
+
+        private partial bool IsConduitDiscipline()
+            => SelectedDiscipline == Discipline.Conduit;
+
+        private partial PipingSystemType GetSelectedPipingSystemType()
+            => SelectedSystemType?.Element as PipingSystemType;
+
+        private partial RouteRequest BuildRouteRequest(bool commit, IRoutingBoundary boundary,
+                                                        PipeSizeInfo? size, List<RouteProblem> preChecks)
+            => new RouteRequest
+            {
+                Source = Source,
+                Target = Target,
+                PipeTypeId = SelectedType?.Id ?? ElementId.InvalidElementId,
+                SystemTypeId = SelectedSystemType?.Id ?? ElementId.InvalidElementId,
+                LevelId = SelectedLevel?.Id ?? ElementId.InvalidElementId,
+                Discipline = SelectedDiscipline,
+                Options = ConstraintOptions,
+                Boundary = boundary,
+                Size = size,
+                PreChecks = preChecks,
+                MinSegmentMm = MinSegmentMm,
+                SuppressWarnings = SuppressWarnings,
+                AddFittings = AddFittings,
+                ConnectEnds = ConnectEnds,
+                Commit = commit
+            };
+
+        private partial void ApplyRouteResult(RouteResult result)
+        {
+            PreviewPoints.Clear();
+            double total = 0;
+            for (int i = 0; i < result.Path.Count; i++)
+            {
+                double segment = i < result.Path.Count - 1 ? result.Path[i].DistanceTo(result.Path[i + 1]) : 0;
+                total += segment;
+                PreviewPoints.Add(new PathPointItem
+                {
+                    Index = i,
+                    X = UnitConv.Mm(result.Path[i].X),
+                    Y = UnitConv.Mm(result.Path[i].Y),
+                    Z = UnitConv.Mm(result.Path[i].Z),
+                    Segment = i < result.Path.Count - 1 ? UnitConv.Mm(segment) : "-",
+                    Direction = i < result.Path.Count - 1 ? RoutePlanner.DirectionLabel(result.Path[i], result.Path[i + 1]) : "End"
+                });
+            }
+            Problems.Clear();
+            foreach (RouteProblem problem in result.Problems) Problems.Add(problem);
+            UpdateSummary(Math.Max(0, result.Path.Count - 1), total);
+            _totalFallFt = result.Path.Count < 2 ? 0 : Math.Abs(result.Path[0].Z - result.Path[result.Path.Count - 1].Z);
+            OnPropertyChanged(nameof(ProblemCount));
+            OnPropertyChanged(nameof(ErrorCount));
+            OnPropertyChanged(nameof(WarningCount));
+            OnPropertyChanged(nameof(ProblemSummary));
+            OnPropertyChanged(nameof(TotalFallText));
+            SelectedEditorTab = 1;
         }
     }
 }

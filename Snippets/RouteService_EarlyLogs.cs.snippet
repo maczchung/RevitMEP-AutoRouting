@@ -1,0 +1,14 @@
+// ===== RouteService.Run 每一步加 log（知道卡喺邊）=====
+
+log?.Invoke($"Start · source Ø{Geom.FtToMm(start.Radius * 2):0} · target Ø{Geom.FtToMm(end.Radius * 2):0} · lead {o.LeadLengthMm:0} mm");
+log?.Invoke($"Region {Geom.FtToMm(regionMax.X - regionMin.X):0} × {Geom.FtToMm(regionMax.Y - regionMin.Y):0} × {Geom.FtToMm(regionMax.Z - regionMin.Z):0} mm" +
+            (b != null ? $" ({b.Kind} {b.Name})" : " (default volume)"));
+log?.Invoke($"Grid {grid.NX} × {grid.NY} × {grid.NZ} = {(long)grid.NX * grid.NY * grid.NZ:N0} cells @ {Geom.FtToMm(cell):0} mm");
+// … ApplyConstraints / BlockSolid 之後
+log?.Invoke($"Grid ready · {blocked} cells blocked by constraints · {walls.Count} walls");
+// … A* 之後
+log?.Invoke($"A* finished · {mid.Count} points");
+// … SlopeApplier 之後
+log?.Invoke($"Path {path.Count} points · slope {o.Slope.Display} · fall {Geom.FtToMm(SlopeApplier.TotalFall(path)):0} mm");
+
+// 所有 early return 之前，確保有加 RouteProblem.Error(...)，否則 UI 會見到 "0 error(s)" 但冇 pipe。

@@ -1,11 +1,14 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>
-  <AddIn Type="Application">
-    <Name>MEP Auto Routing</Name>
-    <Assembly>MEPAutoRouting\MEPAutoRouting.dll</Assembly>
-    <FullClassName>MEPAutoRouting.Core.App</FullClassName>
-    <AddInId>7B3E2A41-5C8D-4F1E-9A62-3D0C8B7E4F15</AddInId>
-    <VendorId>MKWK</VendorId>
-    <VendorDescription>Matthew Kwok - BIM Coordination Tools</VendorDescription>
+  <AddIn Type="Command">
+    <Text>Unified Routing</Text>
+    <Description>MEP Auto Routing - Pipe / Conduit</Description>
+    <!-- Relative path: the DLL and manifest share the Revit 2025 Addins folder. -->
+    <Assembly>MEPAutoRouting.dll</Assembly>
+    <AddInId>8D83C886-B739-4ACD-A9DB-3F85F2D1A111</AddInId>
+    <FullClassName>MEPAutoRouting.Core.AutoRoutingCommand</FullClassName>
+    <VendorId>CUNDALL.HK</VendorId>
+    <VendorDescription>Cundall HK · Matthew Kwok</VendorDescription>
+    <VisibilityMode>NotVisibleWhenNoActiveDocument</VisibilityMode>
   </AddIn>
 </RevitAddIns>
