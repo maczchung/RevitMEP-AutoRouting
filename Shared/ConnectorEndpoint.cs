@@ -6,6 +6,7 @@ namespace MEPAutoRouting
     /// <summary>
     /// Connector 起點 / 終點：Origin、向外方向（對齊軸）、Lead point。
     /// A* 由 Start.Lead 行去 End.Lead；完整路徑 = [Start.Origin, Start.Lead, ...A*..., End.Lead, End.Origin]。
+    /// v4.4：新增 WithLeadLength() – RouteService 用嚟吸收細小偏移。
     /// </summary>
     public sealed class ConnectorEndpoint
     {
@@ -24,11 +25,9 @@ namespace MEPAutoRouting
             if (c == null) throw new ArgumentNullException(nameof(c));
             XYZ z = c.CoordinateSystem.BasisZ.Normalize();   // FamilyInstance connector：向外
             (int dx, int dy, int dz) axis = SnapAxis(z, out bool aligned);
-
             double radius = c.Shape == ConnectorProfileType.Round
                 ? c.Radius
                 : Math.Max(c.Width, c.Height) / 2.0;
-
             var dir = new XYZ(axis.dx, axis.dy, axis.dz);
             double lead = Math.Max(leadLengthFt, radius * 2);
             return new ConnectorEndpoint
@@ -44,6 +43,20 @@ namespace MEPAutoRouting
                 Radius = radius
             };
         }
+
+        /// <summary>Same connector, different lead length (feet).</summary>
+        public ConnectorEndpoint WithLeadLength(double leadFt) => new ConnectorEndpoint
+        {
+            OwnerId = OwnerId,
+            Connector = Connector,
+            Origin = Origin,
+            Direction = Direction,
+            AxisDir = AxisDir,
+            IsAxisAligned = IsAxisAligned,
+            LeadLength = leadFt,
+            Lead = Origin + Direction * leadFt,
+            Radius = Radius
+        };
 
         private static (int dx, int dy, int dz) SnapAxis(XYZ d, out bool aligned)
         {

@@ -1,10 +1,16 @@
-﻿// =====================================================================================
+// =====================================================================================
+<<<<<<< HEAD
 //  MainViewModel.Constraints.cs  (v4.2)
 //  Slope / Wall clearance / Calculation boundary (manual pick) / Pipe size / Route guard
 //  v4.2 修正：
 //   • InitConstraintUi 只會行一次（由 MainWindow.Loaded 觸發；constructor 唔好再 call）
 //   • 由 Revit thread 返 UI 一律用 BeginInvoke（唔再同步 Invoke → 避免 ItemsControl crash）
 //   • Load sizes / Pick boundary 全部 try-catch，失敗寫 OUTPUT + error.log
+=======
+//  MainViewModel.Constraints.cs  (v4)
+//  Slope / Wall clearance / Calculation boundary (manual pick) / Pipe size / Route guard
+//  套用：見 Snippets/MainViewModel_hooks.cs.snippet
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
 // =====================================================================================
 using System;
 using System.Collections.Generic;
@@ -42,6 +48,7 @@ namespace MEPAutoRouting.UI.ViewModels
             nameof(RouteBlockedReason)
         };
 
+<<<<<<< HEAD
         /// <summary>由 MainWindow.Loaded call 一次。重複 call 會被忽略。</summary>
         public void InitConstraintUi()
         {
@@ -49,11 +56,20 @@ namespace MEPAutoRouting.UI.ViewModels
             PropertyChanged -= OnConstraintVmPropertyChanged;
             PropertyChanged += OnConstraintVmPropertyChanged;
             _lastSystemTypeId = GetSelectedPipingSystemType()?.Id;
+=======
+        /// <summary>Constructor 最尾 call 一次（Source / Target / Types 已經載入之後）。</summary>
+        public void InitConstraintUi()
+        {
+            PropertyChanged -= OnConstraintVmPropertyChanged;
+            PropertyChanged += OnConstraintVmPropertyChanged;
+            _lastSystemTypeId = GetSelectedPipingSystemType()?.Id;   // 開 window 唔會蓋咗儲低嘅 slope 設定
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
             _constraintUiReady = true;
             NotifyConstraintUi();
             ReloadSizes();
         }
 
+<<<<<<< HEAD
         /// <summary>由 Revit thread（ExternalEvent）返 UI：一律非同步，失敗唔會 throw。</summary>
         private void PostToUi(Action a, string what)
         {
@@ -72,6 +88,8 @@ namespace MEPAutoRouting.UI.ViewModels
             catch (Exception ex) { RevitActionQueue.WriteErrorFile($"{what}: could not post to UI – {ex.Message}", ex); }
         }
 
+=======
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
         private void NotifyConstraintUi()
         {
             foreach (string p in ConstraintUiProperties) Notify(p);
@@ -143,6 +161,10 @@ namespace MEPAutoRouting.UI.ViewModels
             }
         }
 
+<<<<<<< HEAD
+=======
+        /// <summary>轉單位時保持同一個坡度（1:40 ⇄ 2.5 %）。</summary>
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
         public SlopeUnit SlopeUnit
         {
             get => ConstraintOptions.Slope.Unit;
@@ -263,13 +285,18 @@ namespace MEPAutoRouting.UI.ViewModels
 
             ActionQueue.Enqueue("Pick boundary", app =>
             {
+<<<<<<< HEAD
                 IRoutingBoundary b = null;
                 string error = null;
+=======
+                IRoutingBoundary b;
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
                 try
                 {
                     b = fromLink ? BoundaryPicker.PickLinked(app.ActiveUIDocument)
                                  : BoundaryPicker.PickHost(app.ActiveUIDocument);
                 }
+<<<<<<< HEAD
                 catch (InvalidOperationException ex) { error = ex.Message; }
 
                 PostToUi(() =>
@@ -279,6 +306,20 @@ namespace MEPAutoRouting.UI.ViewModels
                     Boundary = b;
                     Log(Routing.LogLevel.Success, $"Calculation boundary set: {BoundaryText} ({BoundaryDetailText}).");
                 }, "Pick boundary");
+=======
+                catch (InvalidOperationException ex)
+                {
+                    _uiDispatcher.Invoke(() => Log(Routing.LogLevel.Error, ex.Message));
+                    return;
+                }
+
+                _uiDispatcher.Invoke(() =>
+                {
+                    if (b == null) { Log(Routing.LogLevel.Info, "Boundary pick cancelled."); return; }
+                    Boundary = b;
+                    Log(Routing.LogLevel.Success, $"Calculation boundary set: {BoundaryText} ({BoundaryDetailText}).");
+                });
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
             });
         }
 
@@ -348,6 +389,7 @@ namespace MEPAutoRouting.UI.ViewModels
         private void ReloadSizes()
         {
             if (!_constraintUiReady || ActionQueue == null) return;
+<<<<<<< HEAD
 
             ElementId typeId;
             bool conduit;
@@ -361,6 +403,10 @@ namespace MEPAutoRouting.UI.ViewModels
                 RevitActionQueue.WriteErrorFile("ReloadSizes: reading selected type failed – " + ex.Message, ex);
                 return;
             }
+=======
+            ElementId typeId = GetSelectedTypeId();
+            bool conduit = IsConduitDiscipline();
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
             if (typeId == null || typeId == ElementId.InvalidElementId) { ApplySizes(new List<PipeSizeInfo>()); return; }
 
             ActionQueue.Enqueue("Load sizes", app =>
@@ -370,7 +416,11 @@ namespace MEPAutoRouting.UI.ViewModels
                 List<PipeSizeInfo> list = conduit
                     ? PipeSizeCatalog.GetConduitSizes(doc, typeId)
                     : PipeSizeCatalog.GetPipeSizes(doc, typeId);
+<<<<<<< HEAD
                 PostToUi(() => ApplySizes(list), "Load sizes");
+=======
+                _uiDispatcher.Invoke(() => ApplySizes(list));
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
             });
         }
 

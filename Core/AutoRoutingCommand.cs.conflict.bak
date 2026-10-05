@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows.Interop;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
@@ -34,6 +34,11 @@ namespace MEPAutoRouting.Core
                                            uiapp.ActiveUIDocument?.Document?.Title ?? "-",
                                            uiapp.Application.VersionNumber);
                 handler.ViewModel = vm;
+<<<<<<< HEAD
+=======
+                queue.Log += text => vm.Log(LogLevel.Error, text);
+
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
                 _window = new MainWindow(vm);
                 Action<string> onLog = text =>
                 {

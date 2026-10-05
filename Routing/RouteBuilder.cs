@@ -5,9 +5,15 @@ using MEPAutoRouting.Shared;
 
 namespace MEPAutoRouting.Routing
 {
-    /// <summary>Creates MEP curves + elbows along planned points. Caller owns the transaction.</summary>
+    /// <summary>
+    /// Creates MEP curves + elbows along planned points. Caller owns the transaction.
+    /// v4.4: elbow failures report position, turn angle and both segment lengths;
+    ///       straight-through joints (no turn) are skipped.
+    /// </summary>
     public static class RouteBuilder
     {
+        private const double StraightTolDeg = 0.5;
+
         public static RouteResult Build(Document doc, ConnectorInfo s, ConnectorInfo t,
                                         IList<XYZ> pts, RouteOptions o,
                                         Action<LogLevel, string> log)
@@ -33,8 +39,23 @@ namespace MEPAutoRouting.Routing
             {
                 for (int i = 1; i < segments.Count; i++)
                 {
+                    XYZ d1 = (pts[i] - pts[i - 1]).Normalize();
+                    XYZ d2 = (pts[i + 1] - pts[i]).Normalize();
+                    double turnDeg = d1.AngleTo(d2) * 180.0 / Math.PI;
+                    if (turnDeg < StraightTolDeg) continue;   // straight joint – no elbow needed
+
                     var c1 = ConnectorUtils.GetNearestConnector(segments[i - 1], pts[i]);
                     var c2 = ConnectorUtils.GetNearestConnector(segments[i], pts[i]);
+                    string where = $"({UnitConv.Mm(pts[i].X)}, {UnitConv.Mm(pts[i].Y)}, {UnitConv.Mm(pts[i].Z)})";
+                    string lens = $"{UnitConv.Mm(pts[i - 1].DistanceTo(pts[i]))} / {UnitConv.Mm(pts[i].DistanceTo(pts[i + 1]))} mm";
+
+                    if (c1 == null || c2 == null)
+                    {
+                        result.FittingFailures++;
+                        log(LogLevel.Warn, $"Elbow {i} at {where}: connector not found.");
+                        continue;
+                    }
+
                     try
                     {
                         var fit = doc.Create.NewElbowFitting(c1, c2);
@@ -44,7 +65,8 @@ namespace MEPAutoRouting.Routing
                     catch (Exception ex)
                     {
                         result.FittingFailures++;
-                        log(LogLevel.Warn, $"Elbow {i} failed: {ex.Message} (check routing preferences / segment length)");
+                        log(LogLevel.Warn,
+                            $"Elbow {i} failed at {where}: turn {turnDeg:0.0}°, segments {lens} – {ex.Message}");
                     }
                 }
             }
@@ -73,7 +95,12 @@ namespace MEPAutoRouting.Routing
                                        Action<LogLevel, string> log)
         {
             if (equip == null) { log(LogLevel.Warn, $"Could not resolve {label} connector."); return; }
-            if (equip.IsConnected) { log(LogLevel.Warn, $"{label} connector already connected – skipped."); return; }
+            if (equip.IsConnected)
+            {
+                log(LogLevel.Warn, $"{label} connector already connected – skipped. " +
+                                   "Delete pipes from a previous test or re-pick the connector.");
+                return;
+            }
             try
             {
                 var c = ConnectorUtils.GetNearestConnector(seg, at);

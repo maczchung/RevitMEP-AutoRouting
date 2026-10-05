@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
@@ -22,6 +22,7 @@ namespace MEPAutoRouting.UI
             _vm = vm;
             DataContext = vm;
 
+<<<<<<< HEAD
             // 任何漏網 UI exception 都寫入 OUTPUT + error.log，唔會令 Revit crash
             Dispatcher.UnhandledException += (s, e) =>
             {
@@ -31,15 +32,34 @@ namespace MEPAutoRouting.UI
                     $"Unhandled UI exception – {e.Exception.GetType().Name}: {e.Exception.Message}");
             };
 
+=======
+            // 任何漏網 UI exception 都寫入 OUTPUT，唔會靜靜雞冇反應
+            Dispatcher.UnhandledException += (s, e) =>
+            {
+                _vm.Log(Routing.LogLevel.Error,
+                    $"Unhandled UI exception – {e.Exception.GetType().Name}: {e.Exception.Message}");
+                e.Handled = true;
+            };
+
+            // Route / Preview 快捷鍵：先 commit 住 focus 緊嘅 TextBox，再執行
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
             InputBindings.Add(new KeyBinding(new Shared.RelayCommand(() => RunCommand(_vm.PreviewCommand, "Preview")), Key.F5, ModifierKeys.None));
             InputBindings.Add(new KeyBinding(new Shared.RelayCommand(() => RunCommand(_vm.RouteCommand, "Route")), Key.Enter, ModifierKeys.Control));
             InputBindings.Add(new KeyBinding(vm.PickSourceCommand, Key.D1, ModifierKeys.Control));
             InputBindings.Add(new KeyBinding(vm.PickTargetCommand, Key.D2, ModifierKeys.Control));
             InputBindings.Add(new KeyBinding(new Shared.RelayCommand(TogglePanel), Key.J, ModifierKeys.Control));
 
+<<<<<<< HEAD
             // v4.2 FIX：唔好喺 CollectionChanged 入面同步 ScrollIntoView
             // （會觸發 "An ItemsControl is inconsistent with its items source" → Revit crash）
             vm.LogEntries.CollectionChanged += OnLogEntriesChanged;
+=======
+            vm.LogEntries.CollectionChanged += (s, e) =>
+            {
+                if (e.Action == NotifyCollectionChangedAction.Add && vm.LogEntries.Count > 0)
+                    OutputList.ScrollIntoView(vm.LogEntries[vm.LogEntries.Count - 1]);
+            };
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
 
             vm.PropertyChanged += (s, e) =>
             {
@@ -100,7 +120,11 @@ namespace MEPAutoRouting.UI
 
         private void Pin_Click(object sender, RoutedEventArgs e) => _vm.Topmost = !_vm.Topmost;
 
+<<<<<<< HEAD
         // ------------------------------------------------------------- route / preview
+=======
+        // ------------------------------------------------------------- route / preview（3 個入口行為一致）
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
         private void BtnRoute_Click(object sender, RoutedEventArgs e) => RunCommand(_vm.RouteCommand, "Route");
 
         private void BtnPreview_Click(object sender, RoutedEventArgs e) => RunCommand(_vm.PreviewCommand, "Preview");
@@ -108,6 +132,7 @@ namespace MEPAutoRouting.UI
         private void RunCommand(ICommand cmd, string name)
         {
             CommitFocusedInput();
+<<<<<<< HEAD
             SafeUiLog(Routing.LogLevel.Info, $"▶ {name} clicked");
             if (cmd == null) { SafeUiLog(Routing.LogLevel.Error, $"{name} command is not available (null)."); return; }
             if (!cmd.CanExecute(null))
@@ -120,6 +145,20 @@ namespace MEPAutoRouting.UI
             {
                 RevitActionQueue.WriteErrorFile($"{name} failed on UI thread – " + ex.Message, ex);
                 SafeUiLog(Routing.LogLevel.Error, $"{name} failed on UI thread – {ex.GetType().Name}: {ex.Message}");
+=======
+            _vm.Log(Routing.LogLevel.Info, $"▶ {name} clicked");
+            if (cmd == null) { _vm.Log(Routing.LogLevel.Error, $"{name} command is not available (null)."); return; }
+            if (!cmd.CanExecute(null))
+            {
+                _vm.Log(Routing.LogLevel.Warn, $"{name} cannot run: {_vm.RouteBlockedReason ?? "CanExecute returned false"}");
+                return;
+            }
+
+            try { cmd.Execute(null); }
+            catch (Exception ex)
+            {
+                _vm.Log(Routing.LogLevel.Error, $"{name} failed on UI thread – {ex.GetType().Name}: {ex.Message}");
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
             }
         }
 

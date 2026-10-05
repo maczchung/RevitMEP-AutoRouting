@@ -1,5 +1,9 @@
 {
     "chat.tools.terminal.autoApprove": {
-        "dotnet build": true
+        "dotnet build": true,
+        "/^git add -A; git commit -m \"Before cleanup\" --allow-empty; git checkout -b cleanup/remove-unused$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }

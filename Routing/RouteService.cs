@@ -57,6 +57,7 @@ namespace MEPAutoRouting.Routing
                 result.Problems.Add(RouteProblem.Error("Route request is null."));
                 return result;
             }
+
             result.Problems.AddRange(request.PreChecks ?? new List<RouteProblem>());
             if (PathValidator.HasErrors(result.Problems)) return result;
             if (request.Source == null || request.Target == null)
@@ -80,6 +81,12 @@ namespace MEPAutoRouting.Routing
             ConnectorEndpoint target = ConnectorEndpoint.From(targetConnector, lead);
             log?.Invoke($"Start: source {Geom.FtToMm(source.Radius * 2):0} mm, target {Geom.FtToMm(target.Radius * 2):0} mm, lead {options.LeadLengthMm:0} mm.");
 
+            // v4.4 – absorb small connector offsets into the leads (avoids unbuildable short jogs)
+            double routeRadius = request.Size?.OuterRadiusFt ?? Math.Max(source.Radius, target.Radius);
+            double minJog = Math.Max(Geom.MmToFt(100), routeRadius * 6);    // ≈ 3 × D
+            double minLead = Math.Max(Geom.MmToFt(75), routeRadius * 4);    // ≈ 2 × D
+            AlignLeads(ref source, ref target, minJog, minLead, result.Problems, log);
+
             XYZ regionMin;
             XYZ regionMax;
             if (request.Boundary != null)
@@ -100,7 +107,7 @@ namespace MEPAutoRouting.Routing
             }
             log?.Invoke($"Region: {Geom.FtToMm(regionMax.X - regionMin.X):0} x {Geom.FtToMm(regionMax.Y - regionMin.Y):0} x {Geom.FtToMm(regionMax.Z - regionMin.Z):0} mm.");
 
-            double radius = request.Size?.OuterRadiusFt ?? Math.Max(source.Radius, target.Radius);
+            double radius = routeRadius;
             double clearance = Geom.MmToFt(options.WallClearanceMm);
             List<WallObstacle> walls = WallObstacleCollector.Collect(doc, regionMin, regionMax, options.IncludeLinkWalls, clearance + radius);
             var constraints = new RoutingConstraints(request.Boundary, walls, clearance, radius, options.ClearanceOnBoundary);
@@ -110,7 +117,7 @@ namespace MEPAutoRouting.Routing
             AStarPathfinder finder = new AStarPathfinder(doc, CreateBounds(regionMin, regionMax), constraints);
             log?.Invoke("Running A* pathfinder.");
             List<XYZ> middle = finder.FindPath(source.Lead, target.Lead, source.Direction, source, target);
-            log?.Invoke($"A* finished: {middle.Count} points.");
+            log?.Invoke($"A* finished: {middle.Count} points, grid {finder.GridInfo}.");
             if (!PathUtils.IsValid(middle))
             {
                 result.Problems.Add(RouteProblem.Error("No path found. Try a smaller wall clearance, a larger boundary or a shorter lead length."));
@@ -121,18 +128,24 @@ namespace MEPAutoRouting.Routing
             path.AddRange(middle);
             path.Add(target.Origin);
             result.Path = PathUtils.MergeCollinear(path);
+
             result.Problems.AddRange(PathValidator.Validate(result.Path,
-                Geom.MmToFt(request.MinSegmentMm > 0 ? request.MinSegmentMm : 0), constraints.IsBlocked, Geom.MmToFt(50) / 2.0));
+                Geom.MmToFt(request.MinSegmentMm > 0 ? request.MinSegmentMm : 0), constraints.IsBlocked, Geom.MmToFt(50) / 2.0,
+                allowSlope: false));
+
             if (options.Slope != null && options.Slope.Enabled)
                 result.Path = SlopeApplier.Apply(result.Path, options.Slope, result.Problems);
-            log?.Invoke($"Path ready: {result.Path.Count} points, slope {options.Slope.Display}.");
+
+            log?.Invoke($"Path ready: {result.Path.Count} points, slope {options.Slope?.Display ?? "None"}.");
 
             if (!request.Commit) return result;
+
             if (PathValidator.HasErrors(result.Problems))
             {
                 result.Problems.Add(RouteProblem.Error("Errors found. Nothing was created."));
                 return result;
             }
+
             if (request.PipeTypeId == ElementId.InvalidElementId || request.LevelId == ElementId.InvalidElementId)
             {
                 result.Problems.Add(RouteProblem.Error("A valid type and reference level are required."));
@@ -157,13 +170,22 @@ namespace MEPAutoRouting.Routing
                         AddFittings = request.AddFittings,
                         ConnectEnds = request.ConnectEnds
                     };
+
                     RouteResult built = RouteBuilder.Build(doc, request.Source, request.Target, result.Path, routeOptions,
                         (level, message) => log?.Invoke($"{level}: {message}"));
+
                     result.CreatedSegments = built.Segments;
                     result.CreatedElbows = built.Fittings;
+                    result.FittingFailures = built.FittingFailures;
+                    log?.Invoke($"Elbows: {built.Fittings} created, {built.FittingFailures} failed.");
+                    if (built.FittingFailures > 0)
+                        result.Problems.Add(RouteProblem.Warn(
+                            $"{built.FittingFailures} elbow(s) could not be created – see OUTPUT for position, angle and segment lengths."));
+
                     TransactionStatus status = transaction.Commit();
                     foreach (string warning in failures.Warnings) result.Problems.Add(RouteProblem.Warn(warning));
                     foreach (string error in failures.Errors) result.Problems.Add(RouteProblem.Error(error));
+
                     if (status != TransactionStatus.Committed)
                     {
                         result.Problems.Add(RouteProblem.Error($"Revit transaction was not committed ({status})."));
@@ -178,14 +200,61 @@ namespace MEPAutoRouting.Routing
                     return result;
                 }
             }
+
             return result;
         }
 
-        private static BoundingBoxXYZ CreateBounds(XYZ min, XYZ max)
+        // ------------------------------------------------------------------ v4.4 lead alignment
+
+        /// <summary>
+        /// If source.Lead and target.Lead differ by less than <paramref name="minJogFt"/> on an axis,
+        /// an elbow pair cannot fit in that jog. When the axis is a connector axis, lengthen / shorten
+        /// that connector's lead so the offset becomes zero.
+        /// </summary>
+        private static void AlignLeads(ref ConnectorEndpoint s, ref ConnectorEndpoint t,
+                                       double minJogFt, double minLeadFt,
+                                       List<RouteProblem> problems, Action<string> log)
         {
-            var bounds = new BoundingBoxXYZ { Min = min, Max = max };
-            return bounds;
+            string[] names = { "X", "Y", "Z" };
+            for (int a = 0; a < 3; a++)
+            {
+                double diff = C(t.Lead, a) - C(s.Lead, a);
+                if (Math.Abs(diff) < 1.0 / 304.8 || Math.Abs(diff) >= minJogFt) continue;
+
+                bool fixedIt = false;
+                if (Math.Abs(C(s.Direction, a)) > 0.5)
+                {
+                    double len = (C(t.Lead, a) - C(s.Origin, a)) / C(s.Direction, a);
+                    if (len >= minLeadFt)
+                    {
+                        log?.Invoke($"Source lead changed to {Geom.FtToMm(len):0} mm to remove a {Geom.FtToMm(Math.Abs(diff)):0} mm {names[a]} offset.");
+                        s = s.WithLeadLength(len);
+                        fixedIt = true;
+                    }
+                }
+                if (!fixedIt && Math.Abs(C(t.Direction, a)) > 0.5)
+                {
+                    double len = (C(s.Lead, a) - C(t.Origin, a)) / C(t.Direction, a);
+                    if (len >= minLeadFt)
+                    {
+                        log?.Invoke($"Target lead changed to {Geom.FtToMm(len):0} mm to remove a {Geom.FtToMm(Math.Abs(diff)):0} mm {names[a]} offset.");
+                        t = t.WithLeadLength(len);
+                        fixedIt = true;
+                    }
+                }
+                if (!fixedIt)
+                    problems.Add(RouteProblem.Warn(
+                        $"Source and target are offset by only {Geom.FtToMm(Math.Abs(diff)):0} mm in {names[a]} – " +
+                        $"the route needs a short jog (< {Geom.FtToMm(minJogFt):0} mm) and its elbows may fail. " +
+                        "Move the equipment or change the lead length."));
+            }
         }
+
+        private static double C(XYZ p, int axis) => axis == 0 ? p.X : axis == 1 ? p.Y : p.Z;
+
+        private static BoundingBoxXYZ CreateBounds(XYZ min, XYZ max) => new BoundingBoxXYZ { Min = min, Max = max };
+
+        // ------------------------------------------------------------------ preview (RoutePlanner)
 
         public static RoutePlan Plan(ConnectorInfo source, ConnectorInfo target, RouteOptions options,
                                      double levelElevationFt, RoutingOptions routingOptions)
@@ -203,7 +272,8 @@ namespace MEPAutoRouting.Routing
             foreach (string message in plannerMessages)
                 problems.Add(RouteProblem.Warn(message));
 
-            if (routingOptions?.Slope != null && routingOptions.Slope.Enabled)
+            bool sloped = routingOptions?.Slope != null && routingOptions.Slope.Enabled;
+            if (sloped)
                 points = SlopeApplier.Apply(points, routingOptions.Slope, problems);
 
             if (boundary != null)
@@ -220,13 +290,14 @@ namespace MEPAutoRouting.Routing
                     var constraints = new RoutingConstraints(boundary, walls, clearance, radius,
                         routingOptions?.ClearanceOnBoundary != false);
                     problems.AddRange(PathValidator.Validate(points, UnitConv.MmToFt(minSegmentMm > 0 ? minSegmentMm : options.MinSegmentMm),
-                        constraints.IsBlocked, UnitConv.MmToFt(50) / 2.0));
+                        constraints.IsBlocked, UnitConv.MmToFt(50) / 2.0, sloped));
                 }
             }
 
             problems.AddRange(PathValidator.Validate(
                 points,
-                UnitConv.MmToFt(minSegmentMm > 0 ? minSegmentMm : options.MinSegmentMm)));
+                UnitConv.MmToFt(minSegmentMm > 0 ? minSegmentMm : options.MinSegmentMm),
+                allowSlope: sloped));
 
             string boundaryText = boundary == null ? "None" : $"{boundary.Kind} {boundary.Name}";
             return new RoutePlan(points, problems, boundaryText);

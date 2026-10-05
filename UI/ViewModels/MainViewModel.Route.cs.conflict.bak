@@ -1,7 +1,13 @@
-﻿// =====================================================================================
+// =====================================================================================
+<<<<<<< HEAD
 //  MainViewModel.Route.cs  (v4.2)
 //  Route / Preview 統一經 RevitActionQueue 行 RouteService，每一步都寫 OUTPUT。
 //  v4.2：Revit thread → UI 一律用 PostToUi（BeginInvoke），唔再同步 Invoke。
+=======
+//  MainViewModel.Route.cs  (v4.1)
+//  Route / Preview 統一經 RevitActionQueue 行 RouteService，每一步都寫 OUTPUT。
+//  依賴：MainViewModel.Constraints.cs
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
 // =====================================================================================
 using System;
 using System.Collections.Generic;
@@ -12,9 +18,17 @@ namespace MEPAutoRouting.UI.ViewModels
 {
     public partial class MainViewModel
     {
+<<<<<<< HEAD
         private partial RouteRequest BuildRouteRequest(bool commit, IRoutingBoundary boundary,
                                                        PipeSizeInfo? size, List<RouteProblem> preChecks);
 
+=======
+        /// <summary>用 UI 現有選擇建 RouteRequest。</summary>
+        private partial RouteRequest BuildRouteRequest(bool commit, IRoutingBoundary boundary,
+                                                       PipeSizeInfo? size, List<RouteProblem> preChecks);
+
+        /// <summary>將結果寫返 UI：PreviewPoints、Problems、Summary。</summary>
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
         private partial void ApplyRouteResult(RouteResult result);
 
         private void ExecuteRoute(bool commit)
@@ -35,7 +49,10 @@ namespace MEPAutoRouting.UI.ViewModels
             }
             catch (Exception ex)
             {
+<<<<<<< HEAD
                 RevitActionQueue.WriteErrorFile($"{job}: build request failed – {ex.Message}", ex);
+=======
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
                 Log(Routing.LogLevel.Error, $"{job}: could not build the request – {ex.GetType().Name}: {ex.Message}");
                 return;
             }
@@ -45,12 +62,17 @@ namespace MEPAutoRouting.UI.ViewModels
 
             bool queued = ActionQueue.Enqueue(job, app =>
             {
+<<<<<<< HEAD
                 PostToUi(() => Log(Routing.LogLevel.Info, $"{job}: Revit handler started."), job);
+=======
+                UI(() => Log(Routing.LogLevel.Info, $"{job}: Revit handler started."));
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
                 RouteResult r = null;
                 try
                 {
                     if (app.ActiveUIDocument == null)
                         throw new InvalidOperationException("No active Revit document.");
+<<<<<<< HEAD
                     r = RouteService.Run(app.ActiveUIDocument, req,
                         m => PostToUi(() => Log(Routing.LogLevel.Info, m), job));
                 }
@@ -69,6 +91,26 @@ namespace MEPAutoRouting.UI.ViewModels
                         if (result != null) ApplyRouteResult(result);
                         LogOutcome(job, commit, result);
                     }, job);
+=======
+                    r = RouteService.Run(app.ActiveUIDocument, req, m => UI(() => Log(Routing.LogLevel.Info, m)));
+                }
+                catch (Exception ex)
+                {
+                    UI(() => Log(Routing.LogLevel.Error, $"{job}: RouteService crashed – {ex.GetType().Name}: {ex.Message}"));
+                }
+                finally
+                {
+                    UI(() =>
+                    {
+                        IsBusy = false;
+                        if (r != null)
+                        {
+                            try { ApplyRouteResult(r); }
+                            catch (Exception ex) { Log(Routing.LogLevel.Error, $"{job}: could not update the UI – {ex.Message}"); }
+                        }
+                        LogOutcome(job, commit, r);
+                    });
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
                 }
             });
 
@@ -98,5 +140,10 @@ namespace MEPAutoRouting.UI.ViewModels
 
             if (errors > 0) SelectedPanelTab = 0;
         }
+<<<<<<< HEAD
+=======
+
+        private void UI(Action a) => _uiDispatcher.Invoke(a);
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
     }
 }
