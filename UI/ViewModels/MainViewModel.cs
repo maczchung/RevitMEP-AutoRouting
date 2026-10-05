@@ -56,6 +56,10 @@ namespace MEPAutoRouting.UI.ViewModels
             ResetCommand      = new RelayCommand(() => { ApplySettings(new UserSettings()); ResetConstraintUi(); RequestLoadTypes(); Log(LogLevel.Info, "Settings reset to defaults."); });
 
             ActionQueue = queue;
+<<<<<<< HEAD
+=======
+            InitConstraintUi();
+>>>>>>> 6dd4d98ac757c36819d8fe104c6a91a62610d7a2
 
             Log(LogLevel.Info, $"MEP Auto Routing {AppVersion} started · {RevitVersion}");
         }
