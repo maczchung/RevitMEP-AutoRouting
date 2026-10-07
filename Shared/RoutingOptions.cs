@@ -11,6 +11,7 @@ namespace MEPAutoRouting
         public double WallClearanceMm { get; set; } = 50;
         public bool IncludeLinkWalls { get; set; } = true;
         public bool ClearanceOnBoundary { get; set; } = true;
+        public double RegionMarginMm { get; set; } = 2000;   // v4.6 – margin around the route region (wall collection + one A* retry)
         public double LeadLengthMm { get; set; } = 150;
         public double PipeSizeMm { get; set; } = 0;      // 0 = 未設定
         public SlopeSettings Slope { get; set; } = new();

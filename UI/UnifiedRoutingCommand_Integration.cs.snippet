@@ -16,7 +16,8 @@ try
 }
 catch (InvalidOperationException ex)   // Not enclosed / Area = 0
 {
-    TaskDialog.Show("Unified Routing", ex.Message);
+    // v4.6 – no modal dialogs: route failures go to PROBLEMS (RouteProblem) and OUTPUT only
+    System.Diagnostics.Debug.WriteLine(ex.Message);
     return Result.Cancelled;
 }
 if (opt.SpaceSource != SpaceSource.None && space == null) return Result.Cancelled;   // 用戶 Esc
@@ -40,7 +41,8 @@ constraints.AddExemptPoint(endPoint,   exemptR);
 // 起點 / 終點唔喺 Space 入面就提早話俾用戶知
 if (space != null && (!space.Contains(startPoint) || !space.Contains(endPoint)))
 {
-    TaskDialog.Show("Unified Routing", $"起點或終點唔喺 Space '{space.Name}' 入面。");
+    // v4.6 – no modal dialogs: report as RouteProblem / OUTPUT instead
+    System.Diagnostics.Debug.WriteLine($"起點或終點唔喺 Space '{space.Name}' 入面。");
     return Result.Cancelled;
 }
 

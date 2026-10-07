@@ -1,18 +1,18 @@
 using System;
 using System.Collections.Generic;
 using Autodesk.Revit.DB;
-using Autodesk.Revit.UI;
 using MEPAutoRouting;
 
 namespace MEPAutoRouting.Core
 {
     /// <summary>
     /// BetterRoute Horizontal A* pathfinder.
-    /// v4.4 – Aligned grid:
-    ///   • Grid step is chosen PER AXIS so that BOTH start.Lead and end.Lead fall exactly on grid nodes.
-    ///   • Every path point is therefore a node centre → the path is 100 % axis-aligned
-    ///     (no more skewed first / last segment, no more tiny diagonal jog near the target).
-    ///   • RoundPath / RemoveVeryShortSegments removed (they created diagonals).
+    /// v4.4 – Aligned grid: step chosen PER AXIS so start.Lead and end.Lead fall exactly on nodes
+    ///        → path is 100 % axis-aligned (no skewed first / last segment).
+    /// v4.5 – Walls / boundary are always checked, also inside the escape zone near connectors.
+    /// v4.6 – No more modal TaskDialog: failures are reported via LastFailure (RouteProblem + OUTPUT).
+    ///        BFS reachability runs before A* – if the target is unreachable, A* is skipped and the
+    ///        enclosed side (source / target) is reported.
     /// </summary>
     public class AStarPathfinder
     {
@@ -24,7 +24,7 @@ namespace MEPAutoRouting.Core
         private ConnectorEndpoint _endEndpoint;
 
         private const double GridSize = 0.5;                 // nominal step, feet (≈152 mm)
-        private const double SnapTolFt = 1.0 / 304.8;        // 1 mm – smaller offsets are ignored
+        private const double SnapTolFt = 1.0 / 304.8;        // 1 mm
         private const int MarginCells = 12;
         private const int MaxIterations = 400000;
         private const double TurnPenalty = 22.0;
@@ -39,7 +39,6 @@ namespace MEPAutoRouting.Core
         private const double LongBoundaryRatio = 0.55;
         private const double BoundaryNearToleranceFt = 0.75;
 
-        // aligned grid
         private XYZ _origin;
         private double _gx, _gy, _gz;
         private (int X, int Y, int Z) _endIdx;
@@ -47,6 +46,20 @@ namespace MEPAutoRouting.Core
         public string GridInfo =>
             _origin == null ? "-" :
             $"{_gx * 304.8:0} x {_gy * 304.8:0} x {_gz * 304.8:0} mm";
+
+        // v4.6 – structured failure reporting (no modal dialogs)
+        public PathFailureInfo LastFailure { get; private set; }
+        public int BlockedNodeCount { get; private set; }
+        public int TotalNodeCount { get; private set; }
+
+        private double? _verticalMinFt, _verticalMaxFt;
+
+        /// <summary>v4.6 – nodes outside [minFt, maxFt] are treated as blocked by BFS and A* alike.</summary>
+        public void SetVerticalLimits(double minFt, double maxFt)
+        {
+            _verticalMinFt = minFt;
+            _verticalMaxFt = maxFt;
+        }
 
         public AStarPathfinder(Document doc) : this(doc, null, null) { }
         public AStarPathfinder(Document doc, BoundingBoxXYZ routingBounds) : this(doc, routingBounds, null) { }
@@ -70,6 +83,9 @@ namespace MEPAutoRouting.Core
 
         public List<XYZ> FindPath(XYZ start, XYZ end, XYZ startDir)
         {
+            LastFailure = null;
+            BlockedNodeCount = 0;
+            TotalNodeCount = 0;
             if (start == null || end == null) return new List<XYZ>();
             if (start.DistanceTo(end) < 0.001) return new List<XYZ>();
 
@@ -80,8 +96,11 @@ namespace MEPAutoRouting.Core
                 if (_routingBounds != null &&
                     (!IsInsideRoutingVolume(start) || !IsInsideRoutingVolume(end)))
                 {
-                    TaskDialog.Show("A* BetterRoute-Horizontal",
-                        "Start or End is outside the selected routing volume. No pipe was created.");
+                    LastFailure = new PathFailureInfo
+                    {
+                        Reason = PathFailureReason.OutsideRoutingVolume,
+                        Message = "Source or target is outside the routing region – pick a larger boundary."
+                    };
                     return new List<XYZ>();
                 }
 
@@ -98,6 +117,25 @@ namespace MEPAutoRouting.Core
 
                 startNode.IsObstacle = false;
                 endNode.IsObstacle = false;
+
+                // v4.6 – BFS reachability from the source node BEFORE A*: if the target cannot be
+                //        reached, report which side is enclosed by walls and skip A* entirely.
+                if (!BfsReachable(startNode, endNode, grid, box, obstacles, start, end, out int sourceReach))
+                {
+                    BfsReachable(endNode, null, grid, box, obstacles, start, end, out int targetReach);
+                    bool sourceSide = sourceReach <= targetReach;
+                    LastFailure = new PathFailureInfo
+                    {
+                        Reason = sourceSide ? PathFailureReason.SourceEnclosed : PathFailureReason.TargetEnclosed,
+                        Message = sourceSide
+                            ? "No path found – source enclosed by walls."
+                            : "No path found – target enclosed by walls.",
+                        Diagnostics = BuildDiagnostics(obstacleResult, 0) +
+                            Environment.NewLine + $"  BFS reachable nodes: source {sourceReach} / target {targetReach}"
+                    };
+                    return new List<XYZ>();
+                }
+
                 startNode.GCost = 0.0;
                 startNode.HCost = GetHeuristic(startNode.Center, endNode.Center);
 
@@ -110,7 +148,7 @@ namespace MEPAutoRouting.Core
                 {
                     if (++iterations > MaxIterations)
                     {
-                        ShowFailureDebug("A* reached max iterations. No fallback pipe was created.", obstacleResult, iterations);
+                        LastFailure = MakeFailure(obstacleResult, iterations);
                         return new List<XYZ>();
                     }
 
@@ -124,7 +162,7 @@ namespace MEPAutoRouting.Core
 
                         if (PathHitsObstacle(result, obstacles, start, end))
                         {
-                            ShowFailureDebug("A* found a path but final cleaned path intersects an obstacle. No pipe was created.", obstacleResult, iterations);
+                            LastFailure = MakeFailure(obstacleResult, iterations);
                             return new List<XYZ>();
                         }
                         return result;
@@ -167,28 +205,31 @@ namespace MEPAutoRouting.Core
                     }
                 }
 
-                ShowFailureDebug("A* could not find a valid obstacle-free path. No fallback pipe was created.", obstacleResult, iterations);
+                LastFailure = MakeFailure(obstacleResult, iterations);
                 return new List<XYZ>();
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("A* BetterRoute-Horizontal Error", ex.ToString());
+                LastFailure = new PathFailureInfo
+                {
+                    Reason = PathFailureReason.Exception,
+                    Message = $"Routing failed – {ex.GetType().Name}: {ex.Message}",
+                    Diagnostics = ex.ToString()
+                };
                 return new List<XYZ>();
             }
         }
 
         // ================================================================ aligned grid
 
-        /// <summary>Step for one axis so that |span| is an exact multiple of the step.</summary>
         private static double AlignedStep(double span)
         {
             double a = Math.Abs(span);
-            if (a < SnapTolFt) return GridSize;                     // same coordinate → nominal step
+            if (a < SnapTolFt) return GridSize;
             int n = Math.Max(1, (int)Math.Round(a / GridSize));
             return a / n;
         }
 
-        /// <summary>Origin ≤ box.Min, and start lies exactly on a node.</summary>
         private static double AlignedOrigin(double s, double boxMin, double step)
         {
             double k = Math.Max(0, Math.Ceiling((s - boxMin) / step));
@@ -216,19 +257,56 @@ namespace MEPAutoRouting.Core
 
         // ================================================================ search box / obstacles
 
-        private void ShowFailureDebug(string title, ObstacleResult obstacleResult, int iterations)
+        // v4.6 – BFS over the aligned grid using the same passability rules as A*.
+        //        Returns true when 'to' is reached, or when the search is inconclusive
+        //        (iteration cap hit) so A* can make the final call.
+        private bool BfsReachable(AStarNode from, AStarNode to, Dictionary<string, AStarNode> grid,
+                                  SearchBox box, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end,
+                                  out int reached)
         {
-            TaskDialog.Show("A* BetterRoute-Horizontal",
-                title +
-                Environment.NewLine + "Iterations: " + iterations +
-                Environment.NewLine + "Grid step: " + GridInfo +
-                Environment.NewLine + "RoutingBounds: " + (_routingBounds != null) +
-                Environment.NewLine + "All obstacle boxes: " + obstacleResult.AllObstaclesCount +
-                Environment.NewLine + "Used obstacle boxes: " + obstacleResult.UsedObstacles.Count +
-                Environment.NewLine + "Ignored boundary boxes: " + obstacleResult.IgnoredBoundaryCount +
-                Environment.NewLine + "Ignored low-overlap boxes: " + obstacleResult.IgnoredLowOverlapCount +
-                Environment.NewLine + "Tip: if no path is found, lower ZMovePenalty or check routing volume height.");
+            reached = 0;
+            var visited = new HashSet<string> { from.Id };
+            var queue = new Queue<AStarNode>();
+            queue.Enqueue(from);
+            while (queue.Count > 0)
+            {
+                if (++reached > MaxIterations) return true;   // inconclusive – let A* decide
+                AStarNode current = queue.Dequeue();
+                if (to != null && current.X == to.X && current.Y == to.Y && current.Z == to.Z) return true;
+
+                foreach ((int dx, int dy, int dz) direction in PathUtils.SixNeighbours)
+                {
+                    XYZ center = NodeCenter(current.X + direction.dx, current.Y + direction.dy, current.Z + direction.dz);
+                    if (!IsInsideBox(center, box.Min, box.Max)) continue;
+                    if (_routingBounds != null && !IsInsideRoutingVolume(center)) continue;
+
+                    AStarNode neighbor = GetOrCreateNode(grid, center, obstacles, start, end);
+                    if (neighbor.IsObstacle || !visited.Add(neighbor.Id)) continue;
+                    if (IsSegmentBlocked(current.Center, neighbor.Center, obstacles, start, end)) continue;
+                    queue.Enqueue(neighbor);
+                }
+            }
+            return false;
         }
+
+        private PathFailureInfo MakeFailure(ObstacleResult obstacleResult, int iterations) =>
+            new PathFailureInfo
+            {
+                Reason = PathFailureReason.NoPath,
+                Message = "No path found – source/target enclosed by walls.",
+                Diagnostics = BuildDiagnostics(obstacleResult, iterations)
+            };
+
+        private string BuildDiagnostics(ObstacleResult obstacleResult, int iterations) =>
+            "A* diagnostics:" +
+            Environment.NewLine + "  Iterations: " + iterations +
+            Environment.NewLine + "  Grid step: " + GridInfo +
+            Environment.NewLine + "  Routing bounds: " + (_routingBounds != null) +
+            Environment.NewLine + "  Obstacle boxes (columns/framing): " + obstacleResult.AllObstaclesCount +
+                " (used " + obstacleResult.UsedObstacles.Count +
+                ", ignored boundary " + obstacleResult.IgnoredBoundaryCount +
+                ", ignored low-overlap " + obstacleResult.IgnoredLowOverlapCount + ")" +
+            Environment.NewLine + "  Blocked nodes " + BlockedNodeCount + " / " + TotalNodeCount;
 
         private SearchBox BuildSearchBox(XYZ start, XYZ end)
         {
@@ -319,6 +397,8 @@ namespace MEPAutoRouting.Core
             bool outside = _routingBounds != null && !IsInsideRoutingVolume(center);
             node.IsObstacle = outside || CheckIfObstacle(center, obstacles, start, end);
             grid[id] = node;
+            TotalNodeCount++;
+            if (node.IsObstacle) BlockedNodeCount++;
             return node;
         }
 
@@ -342,25 +422,24 @@ namespace MEPAutoRouting.Core
                     !AStarDirectionRules.IsAllowedGoalEntry(direction, _endEndpoint))
                     continue;
 
-                string id = GetNodeId(nx, ny, nz);
-                if (!grid.TryGetValue(id, out AStarNode existing))
-                {
-                    existing = new AStarNode(nx, ny, nz, center, id)
-                    {
-                        IsObstacle = CheckIfObstacle(center, obstacles, start, end)
-                    };
-                    grid[id] = existing;
-                }
-                neighbors.Add(existing);
+                neighbors.Add(GetOrCreateNode(grid, center, obstacles, start, end));
             }
             return neighbors;
         }
 
         private bool CheckIfObstacle(XYZ point, List<BoundingBoxXYZ> obstacles, XYZ start, XYZ end)
         {
+            // v4.6 – the level band is a hard limit: below zLimitMin / above zLimitMax is always blocked
+            //        (BfsReachable and A* share this rule – both go through this method).
+            if (_verticalMinFt.HasValue && point.Z < _verticalMinFt.Value - SnapTolFt) return true;
+            if (_verticalMaxFt.HasValue && point.Z > _verticalMaxFt.Value + SnapTolFt) return true;
+
+            // v4.5 – walls / boundary are ALWAYS checked (lead corridors are exempted inside RoutingConstraints).
+            //        The escape zone only relaxes the column / framing boxes near the connectors.
+            if (_constraints != null && _constraints.IsBlocked(point)) return true;
+
             if (point.DistanceTo(start) < GridSize * EscapeZoneCells || point.DistanceTo(end) < GridSize * EscapeZoneCells)
                 return false;
-            if (_constraints != null && _constraints.IsBlocked(point)) return true;
 
             double tol = GridSize * ObstacleToleranceFactor;
             foreach (BoundingBoxXYZ bb in obstacles)
@@ -406,10 +485,6 @@ namespace MEPAutoRouting.Core
 
         // ================================================================ path
 
-        /// <summary>
-        /// Start / end lie exactly on nodes, so the node centres ARE the path.
-        /// First and last points are replaced by the exact start / end to kill floating error.
-        /// </summary>
         private List<XYZ> RetracePath(AStarNode startNode, AStarNode endNode, XYZ realStart, XYZ realEnd)
         {
             var nodes = new List<XYZ>();
@@ -459,6 +534,16 @@ namespace MEPAutoRouting.Core
         private static bool IsSameMajorAxis(XYZ a, XYZ b) => a != null && b != null && a.DistanceTo(b) < 0.001;
 
         private static string GetNodeId(int x, int y, int z) => x + "," + y + "," + z;
+    }
+
+    public enum PathFailureReason { None, OutsideRoutingVolume, SourceEnclosed, TargetEnclosed, NoPath, Exception }
+
+    /// <summary>v4.6 – structured pathfinder failure. Message goes to PROBLEMS, Diagnostics to OUTPUT.</summary>
+    public sealed class PathFailureInfo
+    {
+        public PathFailureReason Reason { get; set; } = PathFailureReason.None;
+        public string Message { get; set; }
+        public string Diagnostics { get; set; }
     }
 
     public class ObstacleResult

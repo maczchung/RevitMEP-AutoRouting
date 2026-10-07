@@ -24,7 +24,6 @@ namespace MEPAutoRouting
         private const double AxisTolFt = 1.0 / 304.8;   // 1 mm
         private const double MaxSlope = 0.2;            // 20 %
 
-        /// <param name="allowSlope">true = horizontal segments may have a small Z change (slope applied).</param>
         public static List<RouteProblem> Validate(IList<XYZ> path, double minSegmentFt,
                                                   Func<XYZ, bool> isBlocked = null, double sampleStepFt = 0,
                                                   bool allowSlope = false)
@@ -38,7 +37,6 @@ namespace MEPAutoRouting
                 double len = v.GetLength();
                 if (len < 1e-6) { list.Add(RouteProblem.Error($"Segment {i} has zero length.", i)); continue; }
 
-                // v4.4 – axis alignment (skewed pipes = no elbows)
                 if (!IsAxisAligned(v, allowSlope))
                     list.Add(RouteProblem.Error(
                         $"Segment {i} is not axis-aligned (ΔX {Geom.FtToMm(v.X):0}, ΔY {Geom.FtToMm(v.Y):0}, ΔZ {Geom.FtToMm(v.Z):0} mm) – " +
@@ -67,7 +65,7 @@ namespace MEPAutoRouting
                         if (isBlocked(p))
                         {
                             list.Add(RouteProblem.Error(
-                                $"Segment {i} hits an obstacle or leaves the calculation boundary.", i));
+                                $"Segment {i} hits a wall or leaves the calculation boundary.", i));
                             break;
                         }
                     }
@@ -76,14 +74,13 @@ namespace MEPAutoRouting
             return list;
         }
 
-        /// <summary>Vertical, or along X / Y (optionally with slope in Z).</summary>
         public static bool IsAxisAligned(XYZ v, bool allowSlope)
         {
             double ax = Math.Abs(v.X), ay = Math.Abs(v.Y), az = Math.Abs(v.Z);
-            if (ax < AxisTolFt && ay < AxisTolFt) return true;                           // vertical
+            if (ax < AxisTolFt && ay < AxisTolFt) return true;
             double zLimit(double run) => allowSlope ? run * MaxSlope + AxisTolFt : AxisTolFt;
-            if (ay < AxisTolFt && az <= zLimit(ax)) return true;                        // along X
-            if (ax < AxisTolFt && az <= zLimit(ay)) return true;                        // along Y
+            if (ay < AxisTolFt && az <= zLimit(ax)) return true;
+            if (ax < AxisTolFt && az <= zLimit(ay)) return true;
             return false;
         }
 

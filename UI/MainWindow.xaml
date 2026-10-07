@@ -363,6 +363,9 @@
                                             <TextBlock Text="Wall clearance (mm)" Style="{StaticResource Text.Label}" Margin="0,10,0,0"/>
                                             <TextBox Text="{Binding WallClearanceMm, UpdateSourceTrigger=LostFocus}"
                                                      ToolTip="Clear distance from wall face to pipe outside (0 – 2000 mm)"/>
+                                            <TextBlock Text="Region margin (mm)" Style="{StaticResource Text.Label}" Margin="0,10,0,0"/>
+                                            <TextBox Text="{Binding RegionMarginMm, UpdateSourceTrigger=LostFocus}"
+                                                     ToolTip="Extra margin around the route region used for wall collection and one A* retry (0 – 20000 mm, default 2000)"/>
                                             <CheckBox Content="Include linked model walls" IsChecked="{Binding IncludeLinkWalls}" Margin="0,6,0,0"/>
                                         </StackPanel>
                                     </Expander>

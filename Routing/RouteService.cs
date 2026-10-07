@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System;
+using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using MEPAutoRouting.Shared;
@@ -24,22 +25,6 @@ namespace MEPAutoRouting.Routing
         public bool AddFittings { get; init; } = true;
         public bool ConnectEnds { get; init; } = true;
         public bool Commit { get; init; } = true;
-    }
-
-    public sealed class RoutePlan
-    {
-        public List<XYZ> Points { get; }
-        public List<RouteProblem> Problems { get; }
-        public string Boundary { get; }
-        public double TotalFallFt { get; }
-
-        public RoutePlan(List<XYZ> points, List<RouteProblem> problems, string boundary)
-        {
-            Points = points ?? new List<XYZ>();
-            Problems = problems ?? new List<RouteProblem>();
-            Boundary = string.IsNullOrEmpty(boundary) ? "None" : boundary;
-            TotalFallFt = Points.Count < 2 ? 0 : System.Math.Abs(Points[0].Z - Points[Points.Count - 1].Z);
-        }
     }
 
     public static class RouteService
@@ -81,11 +66,15 @@ namespace MEPAutoRouting.Routing
             ConnectorEndpoint target = ConnectorEndpoint.From(targetConnector, lead);
             log?.Invoke($"Start: source {Geom.FtToMm(source.Radius * 2):0} mm, target {Geom.FtToMm(target.Radius * 2):0} mm, lead {options.LeadLengthMm:0} mm.");
 
-            // v4.4 – absorb small connector offsets into the leads (avoids unbuildable short jogs)
-            double routeRadius = request.Size?.OuterRadiusFt ?? Math.Max(source.Radius, target.Radius);
-            double minJog = Math.Max(Geom.MmToFt(100), routeRadius * 6);    // ≈ 3 × D
-            double minLead = Math.Max(Geom.MmToFt(75), routeRadius * 4);    // ≈ 2 × D
+            // v4.4 – absorb small connector offsets into the leads
+            double radius = request.Size?.OuterRadiusFt ?? Math.Max(source.Radius, target.Radius);
+            double minJog = Math.Max(Geom.MmToFt(100), radius * 6);
+            double minLead = Math.Max(Geom.MmToFt(75), radius * 4);
             AlignLeads(ref source, ref target, minJog, minLead, result.Problems, log);
+
+            // v4.6 – configurable margin around the route region (default 2000 mm).
+            //        Walls are collected over region + margin so walls enclosing the room are included.
+            double regionMargin = Geom.MmToFt(options.RegionMarginMm > 0 ? options.RegionMarginMm : 2000);
 
             XYZ regionMin;
             XYZ regionMax;
@@ -101,26 +90,67 @@ namespace MEPAutoRouting.Routing
             }
             else
             {
-                double margin = Geom.MmToFt(2000);
+                double margin = regionMargin;
                 regionMin = new XYZ(Math.Min(source.Lead.X, target.Lead.X) - margin, Math.Min(source.Lead.Y, target.Lead.Y) - margin, Math.Min(source.Lead.Z, target.Lead.Z) - Geom.MmToFt(1000));
                 regionMax = new XYZ(Math.Max(source.Lead.X, target.Lead.X) + margin, Math.Max(source.Lead.Y, target.Lead.Y) + margin, Math.Max(source.Lead.Z, target.Lead.Z) + Geom.MmToFt(1000));
             }
+
+            double clearance = Geom.MmToFt(options.WallClearanceMm);
+
+            // v4.5/v4.6 – keep the route between the reference level and the level above;
+            //             zLimitMin = level + pipe OD/2 + clearance, never below the level.
+            ClampVertical(doc, request.LevelId, source, target, radius, clearance, ref regionMin, ref regionMax, log);
+            double zLimitMin = regionMin.Z, zLimitMax = regionMax.Z;   // hard limits – region expansion never crosses these
+
             log?.Invoke($"Region: {Geom.FtToMm(regionMax.X - regionMin.X):0} x {Geom.FtToMm(regionMax.Y - regionMin.Y):0} x {Geom.FtToMm(regionMax.Z - regionMin.Z):0} mm.");
 
-            double radius = routeRadius;
-            double clearance = Geom.MmToFt(options.WallClearanceMm);
-            List<WallObstacle> walls = WallObstacleCollector.Collect(doc, regionMin, regionMax, options.IncludeLinkWalls, clearance + radius);
-            var constraints = new RoutingConstraints(request.Boundary, walls, clearance, radius, options.ClearanceOnBoundary);
-            constraints.AddExemptCorridor(source, Geom.MmToFt(150));
-            constraints.AddExemptCorridor(target, Geom.MmToFt(150));
+            List<XYZ> middle = null;
+            AStarPathfinder finder = null;
+            RoutingConstraints constraints = null;
 
-            AStarPathfinder finder = new AStarPathfinder(doc, CreateBounds(regionMin, regionMax), constraints);
-            log?.Invoke("Running A* pathfinder.");
-            List<XYZ> middle = finder.FindPath(source.Lead, target.Lead, source.Direction, source, target);
-            log?.Invoke($"A* finished: {middle.Count} points, grid {finder.GridInfo}.");
+            // v4.6 – if A* fails, retry once with an expanded region before reporting no path
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                if (attempt == 1)
+                {
+                    regionMin = new XYZ(regionMin.X - regionMargin, regionMin.Y - regionMargin,
+                                        Math.Max(regionMin.Z - regionMargin, zLimitMin));
+                    regionMax = new XYZ(regionMax.X + regionMargin, regionMax.Y + regionMargin,
+                                        Math.Min(regionMax.Z + regionMargin, zLimitMax));
+                    log?.Invoke($"A* failed – retrying once with expanded region: {Geom.FtToMm(regionMax.X - regionMin.X):0} x {Geom.FtToMm(regionMax.Y - regionMin.Y):0} x {Geom.FtToMm(regionMax.Z - regionMin.Z):0} mm.");
+                }
+
+                XYZ wallsMin = new XYZ(regionMin.X - regionMargin, regionMin.Y - regionMargin, zLimitMin);
+                XYZ wallsMax = new XYZ(regionMax.X + regionMargin, regionMax.Y + regionMargin, zLimitMax);
+                List<WallObstacle> walls = WallObstacleCollector.Collect(doc, wallsMin, wallsMax, options.IncludeLinkWalls, clearance + radius);
+                int linkedWalls = 0;
+                foreach (WallObstacle w in walls) if (w.FromLink) linkedWalls++;
+                log?.Invoke($"Walls: {walls.Count} ({walls.Count - linkedWalls} host, {linkedWalls} linked), clearance {options.WallClearanceMm:0} mm, region margin {Geom.FtToMm(regionMargin):0} mm.");
+                log?.Invoke("Wall Ids: " + (walls.Count == 0
+                    ? "-"
+                    : string.Join(", ", walls.Take(40).Select(w => w.Id.ToString())) + (walls.Count > 40 ? ", …" : "")));
+                if (attempt == 0 && walls.Count == 0)
+                    result.Problems.Add(RouteProblem.Warn(
+                        "No walls found in the routing region – check 'Include linked model walls' and that the link is loaded."));
+
+                constraints = new RoutingConstraints(request.Boundary, walls, clearance, radius, options.ClearanceOnBoundary);
+                constraints.AddExemptCorridor(source, Geom.MmToFt(150));
+                constraints.AddExemptCorridor(target, Geom.MmToFt(150));
+
+                finder = new AStarPathfinder(doc, CreateBounds(regionMin, regionMax), constraints);
+                finder.SetVerticalLimits(zLimitMin, zLimitMax);   // v4.6 – BFS + A* block nodes outside the level band
+                log?.Invoke("Running A* pathfinder.");
+                middle = finder.FindPath(source.Lead, target.Lead, source.Direction, source, target);
+                log?.Invoke($"A* finished: {middle.Count} points, grid {finder.GridInfo}, blocked nodes {finder.BlockedNodeCount} / {finder.TotalNodeCount}.");
+                if (PathUtils.IsValid(middle)) break;
+                if (finder.LastFailure?.Diagnostics != null) log?.Invoke(finder.LastFailure.Diagnostics);
+            }
+
             if (!PathUtils.IsValid(middle))
             {
-                result.Problems.Add(RouteProblem.Error("No path found. Try a smaller wall clearance, a larger boundary or a shorter lead length."));
+                // v4.6 – no modal dialog: the failure is returned as a RouteProblem (PROBLEMS + status bar)
+                result.Problems.Add(RouteProblem.Error(
+                    finder?.LastFailure?.Message ?? "No path found – source/target enclosed by walls."));
                 return result;
             }
 
@@ -204,13 +234,48 @@ namespace MEPAutoRouting.Routing
             return result;
         }
 
-        // ------------------------------------------------------------------ v4.4 lead alignment
+        // ------------------------------------------------------------------ v4.5 vertical limits
 
         /// <summary>
-        /// If source.Lead and target.Lead differ by less than <paramref name="minJogFt"/> on an axis,
-        /// an elbow pair cannot fit in that jog. When the axis is a connector axis, lengthen / shorten
-        /// that connector's lead so the offset becomes zero.
+        /// Z range = [reference level + pipe radius, level above − pipe radius].
+        /// The connectors themselves are always kept inside the range.
         /// </summary>
+        private static void ClampVertical(Document doc, ElementId levelId, ConnectorEndpoint s, ConnectorEndpoint t,
+                                          double radius, double clearanceFt, ref XYZ min, ref XYZ max, Action<string> log)
+        {
+            if (doc.GetElement(levelId) is not Level level)
+            {
+                log?.Invoke("Vertical limits: no valid reference level – Z range left unclamped.");
+                return;
+            }
+
+            double levelZ = level.ProjectElevation;
+            double? nextZ = null;
+            foreach (Level l in new FilteredElementCollector(doc).OfClass(typeof(Level)))
+            {
+                double z = l.ProjectElevation;
+                if (z > levelZ + Geom.MmToFt(1) && (nextZ == null || z < nextZ)) nextZ = z;
+            }
+
+            double lowEnd = Math.Min(Math.Min(s.Origin.Z, s.Lead.Z), Math.Min(t.Origin.Z, t.Lead.Z));
+            double highEnd = Math.Max(Math.Max(s.Origin.Z, s.Lead.Z), Math.Max(t.Origin.Z, t.Lead.Z));
+
+            // v4.6 – zLimitMin = reference level + pipe OD/2 + clearance, never below the reference level.
+            double zMin = levelZ + radius + clearanceFt;
+            if (lowEnd > levelZ) zMin = Math.Min(zMin, lowEnd);   // keep above-level connectors inside the band
+            zMin = Math.Max(zMin, levelZ);
+
+            double zMax = nextZ.HasValue ? Math.Min(max.Z, Math.Max(nextZ.Value - radius, highEnd)) : max.Z;
+
+            min = new XYZ(min.X, min.Y, zMin);
+            max = new XYZ(max.X, max.Y, zMax);
+
+            log?.Invoke($"Vertical limits: Z {Geom.FtToMm(zMin):0} – {Geom.FtToMm(zMax):0} mm " +
+                        $"(level elev {Geom.FtToMm(levelZ):0} mm{(nextZ.HasValue ? "" : ", no level above")}).");
+        }
+
+        // ------------------------------------------------------------------ v4.4 lead alignment
+
         private static void AlignLeads(ref ConnectorEndpoint s, ref ConnectorEndpoint t,
                                        double minJogFt, double minLeadFt,
                                        List<RouteProblem> problems, Action<string> log)
@@ -253,54 +318,5 @@ namespace MEPAutoRouting.Routing
         private static double C(XYZ p, int axis) => axis == 0 ? p.X : axis == 1 ? p.Y : p.Z;
 
         private static BoundingBoxXYZ CreateBounds(XYZ min, XYZ max) => new BoundingBoxXYZ { Min = min, Max = max };
-
-        // ------------------------------------------------------------------ preview (RoutePlanner)
-
-        public static RoutePlan Plan(ConnectorInfo source, ConnectorInfo target, RouteOptions options,
-                                     double levelElevationFt, RoutingOptions routingOptions)
-        {
-            return Plan(null, source, target, options, levelElevationFt, routingOptions, null, null, 0);
-        }
-
-        public static RoutePlan Plan(Document doc, ConnectorInfo source, ConnectorInfo target, RouteOptions options,
-                                     double levelElevationFt, RoutingOptions routingOptions, IRoutingBoundary boundary,
-                                     PipeSizeInfo? size = null, double minSegmentMm = 0)
-        {
-            var problems = new List<RouteProblem>();
-            var plannerMessages = new List<string>();
-            List<XYZ> points = RoutePlanner.Plan(source, target, options, levelElevationFt, plannerMessages);
-            foreach (string message in plannerMessages)
-                problems.Add(RouteProblem.Warn(message));
-
-            bool sloped = routingOptions?.Slope != null && routingOptions.Slope.Enabled;
-            if (sloped)
-                points = SlopeApplier.Apply(points, routingOptions.Slope, problems);
-
-            if (boundary != null)
-            {
-                if (!boundary.Contains(source.Origin, 0, 0) || !boundary.Contains(target.Origin, 0, 0))
-                    problems.Add(RouteProblem.Error($"Source or target is outside {boundary.Kind} '{boundary.Name}'."));
-
-                if (doc != null)
-                {
-                    double radius = size?.OuterRadiusFt ?? System.Math.Max(source.Radius, target.Radius);
-                    double clearance = UnitConv.MmToFt(routingOptions?.WallClearanceMm ?? 0);
-                    var walls = WallObstacleCollector.Collect(doc, boundary.Min, boundary.Max,
-                        routingOptions?.IncludeLinkWalls == true, clearance + radius);
-                    var constraints = new RoutingConstraints(boundary, walls, clearance, radius,
-                        routingOptions?.ClearanceOnBoundary != false);
-                    problems.AddRange(PathValidator.Validate(points, UnitConv.MmToFt(minSegmentMm > 0 ? minSegmentMm : options.MinSegmentMm),
-                        constraints.IsBlocked, UnitConv.MmToFt(50) / 2.0, sloped));
-                }
-            }
-
-            problems.AddRange(PathValidator.Validate(
-                points,
-                UnitConv.MmToFt(minSegmentMm > 0 ? minSegmentMm : options.MinSegmentMm),
-                allowSlope: sloped));
-
-            string boundaryText = boundary == null ? "None" : $"{boundary.Kind} {boundary.Name}";
-            return new RoutePlan(points, problems, boundaryText);
-        }
     }
 }

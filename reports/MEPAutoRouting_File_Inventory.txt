@@ -1,0 +1,106 @@
+MEPAutoRouting – File Inventory
+Generated: 2026-10-07
+Workspace root: l:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting
+Excludes: bin/, obj/, .git/, .vs/
+
+================================================================================
+PROJECT TREE (actual)
+================================================================================
+MEPAutoRouting.csproj                  SDK-style project, net8.0-windows, x64, WPF, REVIT2025 define
+MEPAutoRouting.addin                   Revit 2025 manifest (Command only, relative assembly path)
+Deploy-Revit2025.ps1                   Release build + copy to %AppData%\Autodesk\Revit\Addins\2025
+README_BUILD.txt                       Build notes (STALE: references MEPAutoRouting.UnifiedRoutingCommand)
+README_CONNECTOR_ROUTING.txt           LEGACY doc (net48 / Revit 2024 instructions)
+.gitignore                             Active ignore file
+gitignore                              STRAY duplicate (no dot prefix – git never reads it)
+.vscode\settings.json                  Chat tool auto-approve settings only
+
+Core\
+  App.cs                               IExternalApplication (ribbon) – NOT registered in .addin
+  AutoRoutingCommand.cs                IExternalCommand – active entry point
+  AStarPathfinder.cs                   A* (6-dir, aligned grid) + BFS reachability + MinHeap
+  GeometryExtractor.cs                 Bounding-box collector (columns/framing, host+links, skips Wall)
+  RoutingVolumeUtils.cs                DEAD CODE – no callers
+
+Routing\
+  RouteService.cs                      Orchestrator: validation -> region -> walls -> A* -> slope -> build
+  RouteBuilder.cs                      MEPCurve + elbow creation (caller owns transaction)
+  RoutePlanner.cs                      LEGACY L-shape planner – only DirectionLabel() still used
+  RouteModels.cs                       Discipline, RouteOptions, RouteResult, ConnectorInfo, TypeItem
+  RoutingEventHandler.cs               IExternalEventHandler for Pick / LoadTypes (invoked via queue)
+  ISegmentFactory.cs                   ISegmentFactory + SegmentFactory selector
+
+Shared\
+  AppInfo.cs                           Publisher constants (Cundall HK / Matthew Kwok)
+  BoundaryPicker.cs                    Pick Space/Room/Mass (host + linked)
+  BoundingBoxUtils.cs                  BoundingBoxXYZ -> world AABB (bb.Transform x linkTransform)
+  ConnectorEndpoint.cs                 ConnectorEndpoint + AStarDirectionRules
+  ConnectorSelectionFilter.cs          ISelectionFilter – open End connectors by domain
+  ConnectorUtils.cs                    Connector enumeration helpers
+  Geom.cs                              Distance helpers + mm<->ft
+  IRoutingBoundary.cs                  Boundary interface + BoundaryKind
+  MassVolume.cs                        Mass boundary (SolidVolume-backed)
+  ObservableObject.cs                  INotifyPropertyChanged base
+  PathUtils.cs                         SixNeighbours, RemoveDuplicates, MergeCollinear, TurnPenalty
+  PipeSizeCatalog.cs                   Pipe/Conduit size lists from routing preferences
+  RelayCommand.cs                      ICommand (CommandManager.RequerySuggested)
+  RouteProblem.cs                      RouteProblem record + PathValidator
+  RoutingConstraints.cs                Wall clearance + boundary + exempt corridors (IsBlocked)
+  RoutingOptions.cs                    Persisted constraint options (%AppData%\settings.json)
+  SlopeApplier.cs                      Applies gradient to path runs
+  SlopeSettings.cs                     1:N / % parsing, gravity-system detection
+  SolidVolume.cs                       Solid-based point containment (ray intersection)
+  SpaceVolume.cs                       Space/Room polygon boundary
+  UnitConv.cs                          mm/ft/format helpers
+  WallObstacle.cs                      WallObstacle + WallObstacleCollector (host + linked)
+  WarningSwallower.cs                  DEAD CODE – never instantiated
+  Revit\
+    RevitActionQueue.cs                IExternalEventHandler + ExternalEvent queue (modeless bridge)
+    RouteFailureCollector.cs           IFailuresPreprocessor used by RouteService transaction
+
+Plumbing\PipeSegmentFactory.cs         Pipe.Create
+Mechanical\DuctSegmentFactory.cs       Duct.Create
+Electrical\ConduitSegmentFactory.cs    Conduit.Create + CableTraySegmentFactory (CableTray.Create)
+
+UI\
+  MainWindow.xaml                      Modeless window (VS Code dark theme)
+  MainWindow.xaml.cs                   Code-behind: title bar, shortcuts, panel, converters
+  Themes\VSCodeDark.xaml               Resource dictionary
+  ViewModels\MainViewModel.cs          VM core (partial)
+  ViewModels\MainViewModel.Route.cs    ExecuteRoute via RevitActionQueue (partial)
+  ViewModels\MainViewModel.Constraints.cs  Slope/boundary/size/route guard (partial)
+  ViewModels\UserSettings.cs           Persisted UI settings (%AppData%\settings.json – SAME FILE as RoutingOptions)
+  ViewModels\LogEntry.cs               LogEntry, PathPointItem, Option<T>
+  UnifiedRoutingCommand_Integration.cs.snippet   NOT COMPILED (legacy integration sketch)
+  UnifiedRoutingUI_Constraints.cs.snippet        NOT COMPILED
+  UnifiedRoutingUI_Constraints.xaml.snippet      NOT COMPILED
+  VoxelGrid_ApplyConstraints.cs.snippet          NOT COMPILED (VoxelGrid no longer exists)
+
+Resources\route_16.png, route_32.png   Ribbon icons (included as Resource)
+
+Tools\Check-Project.ps1                Maintenance checks (dupes, CJK strings, entry points)
+Tools\Resolve-MergeConflicts.ps1       Git merge helper
+
+================================================================================
+COMPILATION INCLUSION CHECK (SDK-style default glob **/*.cs)
+================================================================================
+- All 45 .cs files above ARE compiled (no <Compile Remove>).
+- *.snippet files are NOT compiled (extension not .cs).
+- obj\expanded.csproj is generated; obj\*_wpftmp projects are WPF temp artifacts.
+- No duplicate class definitions detected (build = 0 errors / 0 warnings).
+- No legacy UnifiedRoutingCommand.cs / UnifiedRoutingUI.cs / VoxelGrid.cs sources exist.
+
+================================================================================
+SOLUTION / TEST PROJECTS
+================================================================================
+- No .sln file. Single .csproj.
+- No test projects, no test files.
+
+================================================================================
+DEPLOYMENT STATE (%AppData%\Autodesk\Revit\Addins)
+================================================================================
+2025\MEPAutoRouting.addin              655 bytes, hash matches workspace manifest
+2025\MEPAutoRouting.dll                206,848 bytes 10/6 10:18 – STALE Debug build (manifest loads THIS one)
+2025\MEPAutoRouting\MEPAutoRouting.dll 206,848 bytes 10/6 18:16 – newer Debug build, NOT loaded (subfolder)
+2024\MEPAutoRouting.addin              LEGACY manifest still present (FullClassName MEPAutoRouting.UnifiedRoutingCommand,
+                                       absolute 2024 path, VendorId MY) – deploy script intends to remove it but it is back

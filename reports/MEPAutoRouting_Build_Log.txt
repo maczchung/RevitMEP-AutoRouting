@@ -1,0 +1,59 @@
+MEPAutoRouting – Build Log
+Generated: 2026-10-07
+Machine: Windows, PowerShell, .NET SDK (net8.0-windows workload)
+
+================================================================================
+COMMANDS
+================================================================================
+cd "l:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting"
+dotnet clean .\MEPAutoRouting.csproj -c Release
+dotnet build .\MEPAutoRouting.csproj -c Release
+
+================================================================================
+CLEAN OUTPUT (tail)
+================================================================================
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+Time Elapsed 00:00:00.67
+
+================================================================================
+BUILD OUTPUT
+================================================================================
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  MEPAutoRouting -> L:\m.kwok\VS code\00_Active\RevitMEP-AutoRouting\bin\Release\net8.0-windows\MEPAutoRouting.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+Time Elapsed 00:00:04.60
+
+================================================================================
+SUMMARY
+================================================================================
+Result            : SUCCESS
+Errors            : 0
+Warnings          : 0
+Target framework  : net8.0-windows (UseWPF=true, PlatformTarget=x64, Platforms=x64)
+Assembly name     : MEPAutoRouting
+Version           : 1.4.0
+Output DLL        : bin\Release\net8.0-windows\MEPAutoRouting.dll (180,224 bytes after this build)
+Build duration    : ~4.6 s (build) / ~5.0 s (total wall clock)
+DefineConstants   : REVIT2025
+NoWarn            : MSB3277 (assembly-version conflict warning suppressed)
+
+================================================================================
+REFERENCES (MEPAutoRouting.csproj lines 41-50)
+================================================================================
+RevitAPI.dll      HintPath $(RevitInstallDir)\RevitAPI.dll      Private=false
+RevitAPIUI.dll    HintPath $(RevitInstallDir)\RevitAPIUI.dll    Private=false
+RevitInstallDir default: C:\Program Files\Autodesk\Revit 2025 (verified present on this machine)
+No other Autodesk DLLs referenced. No NuGet packages. No Revit 2024 / net48 mixing.
+
+Notes
+- MSB3277 is suppressed via <NoWarn>; no conflicts were emitted during this build.
+- Debug configuration auto-deploys via DeployToRevit target to
+  %AppData%\Autodesk\Revit\Addins\2025\MEPAutoRouting\ (SUBFOLDER) while the manifest
+  references the DLL in the addins ROOT -> Debug deploys land where Revit does not load them.
+  Release deployment is via Deploy-Revit2025.ps1 (copies DLLs to addins ROOT).

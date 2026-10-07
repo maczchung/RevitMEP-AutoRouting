@@ -41,6 +41,7 @@ namespace MEPAutoRouting.UI.ViewModels
             }
 
             IsBusy = true;
+            PreviewPoints.Clear();   // v4.6 – clear any stale Path Preview at the start of every run
             Log(Routing.LogLevel.Info, $"{job} queued…");
 
             bool queued = ActionQueue.Enqueue(job, app =>
@@ -67,6 +68,7 @@ namespace MEPAutoRouting.UI.ViewModels
                     {
                         IsBusy = false;
                         if (result != null) ApplyRouteResult(result);
+                        else PreviewPoints.Clear();   // v4.6 – on failure the Path Preview stays empty
                         LogOutcome(job, commit, result);
                     }, job);
                 }

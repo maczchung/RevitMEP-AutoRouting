@@ -7,8 +7,7 @@ namespace MEPAutoRouting.Routing
 {
     /// <summary>
     /// Creates MEP curves + elbows along planned points. Caller owns the transaction.
-    /// v4.4: elbow failures report position, turn angle and both segment lengths;
-    ///       straight-through joints (no turn) are skipped.
+    /// v4.4: elbow failures report position, turn angle and both segment lengths.
     /// </summary>
     public static class RouteBuilder
     {
@@ -22,7 +21,6 @@ namespace MEPAutoRouting.Routing
             var factory = SegmentFactory.For(o);
             var segments = new List<MEPCurve>();
 
-            // 1. Segments
             for (int i = 0; i < pts.Count - 1; i++)
             {
                 MEPCurve seg = factory.Create(doc, pts[i], pts[i + 1]);
@@ -34,7 +32,6 @@ namespace MEPAutoRouting.Routing
             result.Segments = segments.Count;
             doc.Regenerate();
 
-            // 2. Elbows
             if (o.AddFittings)
             {
                 for (int i = 1; i < segments.Count; i++)
@@ -42,7 +39,7 @@ namespace MEPAutoRouting.Routing
                     XYZ d1 = (pts[i] - pts[i - 1]).Normalize();
                     XYZ d2 = (pts[i + 1] - pts[i]).Normalize();
                     double turnDeg = d1.AngleTo(d2) * 180.0 / Math.PI;
-                    if (turnDeg < StraightTolDeg) continue;   // straight joint – no elbow needed
+                    if (turnDeg < StraightTolDeg) continue;
 
                     var c1 = ConnectorUtils.GetNearestConnector(segments[i - 1], pts[i]);
                     var c2 = ConnectorUtils.GetNearestConnector(segments[i], pts[i]);
@@ -71,7 +68,6 @@ namespace MEPAutoRouting.Routing
                 }
             }
 
-            // 3. End connections
             if (o.ConnectEnds && segments.Count > 0)
             {
                 TryConnect(s.Resolve(doc), segments[0], pts[0], "source", log);

@@ -12,7 +12,7 @@ using MEPAutoRouting.UI.ViewModels;
 
 namespace MEPAutoRouting.Routing
 {
-    public enum RoutingRequest { None, PickSource, PickTarget, LoadTypes, Preview, Route }
+    public enum RoutingRequest { None, PickSource, PickTarget, LoadTypes }
 
     /// <summary>
     /// All Revit API work from the modeless window goes through here (valid API context).
@@ -44,8 +44,6 @@ namespace MEPAutoRouting.Routing
                     case RoutingRequest.PickSource: Pick(uidoc, vm, true); break;
                     case RoutingRequest.PickTarget: Pick(uidoc, vm, false); break;
                     case RoutingRequest.LoadTypes: LoadTypes(doc, vm); break;
-                    case RoutingRequest.Preview: Preview(uidoc, vm); break;
-                    case RoutingRequest.Route: Route(uidoc, vm); break;
                 }
             }
             catch (Autodesk.Revit.Exceptions.OperationCanceledException)
@@ -115,100 +113,8 @@ namespace MEPAutoRouting.Routing
             vm.Log(LogLevel.Info, $"Loaded {types.Count} {vm.SelectedDiscipline.Label()} types, {systems.Count} system types, {levels.Count} levels.");
         }
 
-        // ------------------------------------------------------------------ plan
-        private static RoutePlan PlanPath(UIDocument uidoc, MainViewModel vm, RouteOptions o)
-        {
-            Document doc = uidoc.Document;
-            if (vm.Source == null || vm.Target == null)
-                throw new InvalidOperationException("Pick both SOURCE and TARGET connectors first.");
-            if (vm.Source.OwnerId == vm.Target.OwnerId && vm.Source.ConnectorId == vm.Target.ConnectorId)
-                throw new InvalidOperationException("Source and target are the same connector.");
-
-            var level = doc.GetElement(o.LevelId) as Level;
-            double levelZ = level?.ProjectElevation ?? 0;
-            var inputs = vm.GetConstraintInputs();
-            RouteRequest request = new RouteRequest
-            {
-                Source = vm.Source,
-                Target = vm.Target,
-                Boundary = inputs.Boundary,
-                Options = vm.ConstraintOptions,
-                Size = inputs.Size,
-                PreChecks = inputs.PreChecks,
-                MinSegmentMm = vm.MinSegmentMm
-            };
-            o.Size = request.Size;
-            RoutePlan plan = RouteService.Plan(doc, request.Source, request.Target, o, levelZ, request.Options, request.Boundary, request.Size, request.MinSegmentMm);
-            plan.Problems.InsertRange(0, request.PreChecks);
-            return plan;
-        }
-
-        private static void Preview(UIDocument uidoc, MainViewModel vm)
-        {
-            var o = vm.BuildOptions();
-            RoutePlan plan = PlanPath(uidoc, vm, o);
-            vm.SetPreview(plan.Points, plan.Problems);
-            vm.Log(LogLevel.Info, $"Preview: {plan.Points.Count - 1} segments, {plan.Problems.Count} problem(s).");
-        }
-
-        // ------------------------------------------------------------------ route
-        private static void Route(UIDocument uidoc, MainViewModel vm)
-        {
-            Document doc = uidoc.Document;
-            var o = vm.BuildOptions();
-
-            if (o.TypeId == ElementId.InvalidElementId) throw new InvalidOperationException("Select a type.");
-            if (o.Discipline.HasSystemType() && o.SystemTypeId == ElementId.InvalidElementId)
-                throw new InvalidOperationException("Select a system type.");
-            if (o.LevelId == ElementId.InvalidElementId) throw new InvalidOperationException("Select a reference level.");
-
-            RoutePlan plan = PlanPath(uidoc, vm, o);
-            vm.SetPreview(plan.Points, plan.Problems);
-            if (PathValidator.HasErrors(plan.Problems))
-            {
-                vm.Log(LogLevel.Error, "Route blocked: resolve the Error problems first.");
-                vm.Status = "Route blocked";
-                return;
-            }
-
-            using var tx = new Transaction(doc, "MEP Auto Route");
-            var swallower = new WarningSwallower();
-            if (o.SuppressWarnings)
-            {
-                var fho = tx.GetFailureHandlingOptions();
-                fho.SetFailuresPreprocessor(swallower);
-                tx.SetFailureHandlingOptions(fho);
-            }
-            tx.Start();
-
-            RouteResult res;
-            try
-            {
-                res = RouteBuilder.Build(doc, vm.Source, vm.Target, plan.Points, o, vm.Log);
-            }
-            catch
-            {
-                tx.RollBack();
-                throw;
-            }
-
-            if (tx.Commit() != TransactionStatus.Committed)
-            {
-                vm.Log(LogLevel.Error, "Transaction was not committed.");
-                return;
-            }
-
-            if (vm.SelectAfterRoute && res.Created.Count > 0)
-                uidoc.Selection.SetElementIds(res.Created);
-
-            var level = res.FittingFailures == 0 ? LogLevel.Success : LogLevel.Warn;
-            vm.Log(level, $"Routed {res.Segments} segment(s), {res.Fittings} elbow(s), " +
-                          $"{res.FittingFailures} elbow failure(s), {swallower.Suppressed} warning(s) suppressed.");
-            vm.Status = "Route complete";
-
-            // connectors are now used – clear so the next pick is fresh
-            vm.Source = null;
-            vm.Target = null;
-        }
+        // ------------------------------------------------------------------ plan / route
+        // v4.6 – Preview and Route go exclusively through MainViewModel.ExecuteRoute →
+        //        RouteService.Run (RevitActionQueue). The old RoutePlanner-based path was removed.
     }
 }

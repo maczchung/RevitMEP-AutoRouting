@@ -23,7 +23,7 @@ namespace MEPAutoRouting
         public static ConnectorEndpoint From(Connector c, double leadLengthFt)
         {
             if (c == null) throw new ArgumentNullException(nameof(c));
-            XYZ z = c.CoordinateSystem.BasisZ.Normalize();   // FamilyInstance connector：向外
+            XYZ z = c.CoordinateSystem.BasisZ.Normalize();
             (int dx, int dy, int dz) axis = SnapAxis(z, out bool aligned);
             double radius = c.Shape == ConnectorProfileType.Round
                 ? c.Radius

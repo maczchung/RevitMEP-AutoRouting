@@ -36,7 +36,7 @@ namespace MEPAutoRouting.UI.ViewModels
         private static readonly string[] ConstraintUiProperties =
         {
             nameof(SlopeEnabled), nameof(SlopeValue), nameof(SlopeUnit), nameof(SlopeFlow), nameof(SlopeText),
-            nameof(WallClearanceMm), nameof(IncludeLinkWalls), nameof(ClearanceOnBoundary),
+            nameof(WallClearanceMm), nameof(IncludeLinkWalls), nameof(ClearanceOnBoundary), nameof(RegionMarginMm),
             nameof(Boundary), nameof(HasBoundary), nameof(BoundaryText), nameof(BoundaryDetailText), nameof(BoundarySummaryText),
             nameof(PipeSizeText), nameof(SelectedListSize), nameof(IsSizeInputEnabled), nameof(SizeSummaryText),
             nameof(RouteBlockedReason)
@@ -109,6 +109,7 @@ namespace MEPAutoRouting.UI.ViewModels
             ConstraintOptions.WallClearanceMm = d.WallClearanceMm;
             ConstraintOptions.IncludeLinkWalls = d.IncludeLinkWalls;
             ConstraintOptions.ClearanceOnBoundary = d.ClearanceOnBoundary;
+            ConstraintOptions.RegionMarginMm = d.RegionMarginMm;
             ConstraintOptions.PipeSizeMm = d.PipeSizeMm;
             ConstraintOptions.Slope = new SlopeSettings();
             Boundary = null;
@@ -200,6 +201,22 @@ namespace MEPAutoRouting.UI.ViewModels
         {
             get => ConstraintOptions.IncludeLinkWalls;
             set { ConstraintOptions.IncludeLinkWalls = value; Notify(nameof(IncludeLinkWalls)); }
+        }
+
+        public double RegionMarginMm
+        {
+            get => ConstraintOptions.RegionMarginMm;
+            set
+            {
+                if (value < 0 || value > 20000)
+                {
+                    Log(Routing.LogLevel.Warn, "Region margin must be between 0 and 20000 mm.");
+                    Notify(nameof(RegionMarginMm));
+                    return;
+                }
+                ConstraintOptions.RegionMarginMm = value;
+                Notify(nameof(RegionMarginMm));
+            }
         }
 
         public bool ClearanceOnBoundary
