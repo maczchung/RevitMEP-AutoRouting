@@ -41,5 +41,19 @@ namespace MEPAutoRouting
             return n.Contains("storm") || n.Contains("rain") || n.Contains("drain")
                 || n.Contains("waste") || n.Contains("soil") || n.Contains("condensate");
         }
+
+        /// <summary>
+        /// v4.8 (Task 4) – true for sanitary / storm / drain / waste / soil / condensate systems.
+        /// isPressurised is set for common boosted / domestic water systems so the UI can warn
+        /// when a slope is applied to a pressurised system.
+        /// </summary>
+        public static bool IsGravitySystem(PipingSystemType st, out bool isPressurised)
+        {
+            bool gravity = IsGravitySystem(st);
+            string n = (st?.Name ?? "").ToLowerInvariant();
+            isPressurised = !gravity && (n.Contains("boosted") || n.Contains("domestic")
+                || n.Contains("cold water") || n.Contains("hot water") || n.Contains("pressur"));
+            return gravity;
+        }
     }
 }

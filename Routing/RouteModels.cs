@@ -127,6 +127,8 @@ namespace MEPAutoRouting.Routing
         public int Segments { get; set; }
         public int Fittings { get; set; }
         public int FittingFailures { get; set; }
+        // v4.8 (Task 3) – per-elbow failure detail (index, angle, sizes, elbow family)
+        public List<RouteBuilder.FittingFailureInfo> FittingFailureDetails { get; } = new List<RouteBuilder.FittingFailureInfo>();
         public bool Success { get; set; }
     }
 

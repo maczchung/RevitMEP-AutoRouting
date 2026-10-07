@@ -33,14 +33,6 @@ namespace MEPAutoRouting.UI.ViewModels
             Disciplines = Enum.GetValues(typeof(Discipline)).Cast<Discipline>()
                 .Select(d => new Option<Discipline> { Value = d, Label = d.Label() }).ToList();
 
-            Strategies = new List<Option<RouteStrategy>>
-            {
-                new() { Value = RouteStrategy.XThenY,        Label = "Horizontal X → Y",  Description = "Run along X, then Y, change level at target." },
-                new() { Value = RouteStrategy.YThenX,        Label = "Horizontal Y → X",  Description = "Run along Y, then X, change level at target." },
-                new() { Value = RouteStrategy.VerticalFirst, Label = "Vertical first",    Description = "Rise / drop at source, then run horizontally." },
-                new() { Value = RouteStrategy.AtElevation,   Label = "At fixed elevation", Description = "Rise to level + offset, run, then drop to target." },
-            };
-
             _settings = UserSettings.Load();
             ApplySettings(_settings);
 
@@ -105,8 +97,7 @@ namespace MEPAutoRouting.UI.ViewModels
         private void OnConnectorsChanged()
         {
             OnPropertyChanged(nameof(CanPlan));
-            PreviewPoints.Clear();
-            UpdateSummary(0, 0);
+            ClearRoutePreview();
             CommandManager.InvalidateRequerySuggested();
         }
 
@@ -136,8 +127,8 @@ namespace MEPAutoRouting.UI.ViewModels
         public ObservableCollection<TypeItem> Levels { get; } = new();
 
         private TypeItem _selectedType, _selectedSystemType, _selectedLevel;
-        public TypeItem SelectedType       { get => _selectedType;       set => Set(ref _selectedType, value); }
-        public TypeItem SelectedSystemType { get => _selectedSystemType; set => Set(ref _selectedSystemType, value); }
+        public TypeItem SelectedType       { get => _selectedType;       set { if (Set(ref _selectedType, value)) ClearRoutePreview(); } }
+        public TypeItem SelectedSystemType { get => _selectedSystemType; set { if (Set(ref _selectedSystemType, value)) ClearRoutePreview(); } }
         public TypeItem SelectedLevel      { get => _selectedLevel;      set => Set(ref _selectedLevel, value); }
 
         public void SetTypes(List<TypeItem> types, List<TypeItem> systems, List<TypeItem> levels, ElementId activeLevel)
@@ -164,18 +155,7 @@ namespace MEPAutoRouting.UI.ViewModels
         }
 
         // ================================================================ routing options
-        public List<Option<RouteStrategy>> Strategies { get; }
-
-        private RouteStrategy _strategy;
-        public RouteStrategy Strategy
-        {
-            get => _strategy;
-            set { if (Set(ref _strategy, value)) { OnPropertyChanged(nameof(IsElevationMode)); OnPropertyChanged(nameof(StrategyDescription)); } }
-        }
-        public bool IsElevationMode => Strategy == RouteStrategy.AtElevation;
-        public string StrategyDescription => Strategies.First(s => s.Value == Strategy).Description;
-
-        private double _elevationMm, _minSegmentMm;
+        private double _minSegmentMm;
         public double LeadMm
         {
             get => ConstraintOptions.LeadLengthMm;
@@ -187,7 +167,6 @@ namespace MEPAutoRouting.UI.ViewModels
                 OnPropertyChanged(nameof(LeadMm));
             }
         }
-        public double ElevationMm  { get => _elevationMm;  set => Set(ref _elevationMm, value); }
         public double MinSegmentMm { get => _minSegmentMm; set => Set(ref _minSegmentMm, Math.Max(0, value)); }
 
         private bool _matchSize, _addFittings, _connectEnds, _suppressWarnings, _selectAfterRoute, _topmost;
@@ -204,9 +183,7 @@ namespace MEPAutoRouting.UI.ViewModels
             TypeId = SelectedType?.Id ?? ElementId.InvalidElementId,
             SystemTypeId = SelectedSystemType?.Id ?? ElementId.InvalidElementId,
             LevelId = SelectedLevel?.Id ?? ElementId.InvalidElementId,
-            Strategy = Strategy,
             LeadMm = LeadMm,
-            ElevationMm = ElevationMm,
             MinSegmentMm = MinSegmentMm,
             MatchSize = MatchSize,
             AddFittings = AddFittings,
@@ -218,16 +195,15 @@ namespace MEPAutoRouting.UI.ViewModels
         {
             _selectedDiscipline = s.Discipline; OnPropertyChanged(nameof(SelectedDiscipline));
             OnPropertyChanged(nameof(HasSystemTypes)); OnPropertyChanged(nameof(DisciplineLabel));
-            Strategy = s.Strategy;
-            LeadMm = s.LeadMm; ElevationMm = s.ElevationMm; MinSegmentMm = s.MinSegmentMm;
+            LeadMm = s.LeadMm; MinSegmentMm = s.MinSegmentMm;
             MatchSize = s.MatchSize; AddFittings = s.AddFittings; ConnectEnds = s.ConnectEnds;
             SuppressWarnings = s.SuppressWarnings; SelectAfterRoute = s.SelectAfterRoute; Topmost = s.Topmost;
         }
 
         public void SaveSettings()
         {
-            _settings.Discipline = SelectedDiscipline; _settings.Strategy = Strategy;
-            _settings.LeadMm = LeadMm; _settings.ElevationMm = ElevationMm; _settings.MinSegmentMm = MinSegmentMm;
+            _settings.Discipline = SelectedDiscipline;
+            _settings.LeadMm = LeadMm; _settings.MinSegmentMm = MinSegmentMm;
             _settings.MatchSize = MatchSize; _settings.AddFittings = AddFittings; _settings.ConnectEnds = ConnectEnds;
             _settings.SuppressWarnings = SuppressWarnings; _settings.SelectAfterRoute = SelectAfterRoute; _settings.Topmost = Topmost;
             _settings.Save();
@@ -298,6 +274,16 @@ namespace MEPAutoRouting.UI.ViewModels
             TotalLengthText = $"{UnitConv.Mm(totalFt)} mm";
         }
 
+        // v4.7 (ISS-012/ISS-013) – any routing-input change invalidates the current preview,
+        // total fall and summary so stale route results cannot survive a parameter change.
+        private void ClearRoutePreview()
+        {
+            PreviewPoints.Clear();
+            _totalFallFt = 0;
+            OnPropertyChanged(nameof(TotalFallText));
+            UpdateSummary(0, 0);
+        }
+
         // ================================================================ output log
         public ObservableCollection<LogEntry> LogEntries { get; } = new();
 
@@ -331,11 +317,11 @@ namespace MEPAutoRouting.UI.ViewModels
 
         public void RequestLoadTypes() => Raise(RoutingRequest.LoadTypes);
 
+        // v4.8 (ISS-006) – the request is captured in the closure; no shared field can be overwritten.
         private void Raise(RoutingRequest request)
         {
             if (IsBusy) return;
-            _handler.Request = request;
-            if (!_queue.Enqueue(request.ToString(), app => _handler.Execute(app)))
+            if (!_queue.Enqueue(request.ToString(), app => _handler.Execute(app, request)))
                 Log(LogLevel.Warn, "Revit is busy. Finish the current command and try again.");
         }
 
@@ -351,6 +337,7 @@ namespace MEPAutoRouting.UI.ViewModels
         private void ClearSelection()
         {
             Source = null; Target = null;
+            ClearRoutePreview();   // v4.7 (ISS-013) – also covers the case where both were already null
             Problems.Clear(); OnPropertyChanged(nameof(ProblemCount));
             Status = "Ready";
         }
@@ -390,7 +377,8 @@ namespace MEPAutoRouting.UI.ViewModels
                 SuppressWarnings = SuppressWarnings,
                 AddFittings = AddFittings,
                 ConnectEnds = ConnectEnds,
-                Commit = commit
+                Commit = commit,
+                SelectAfterRoute = SelectAfterRoute   // v4.8 (ISS-015)
             };
 
         private partial void ApplyRouteResult(RouteResult result)

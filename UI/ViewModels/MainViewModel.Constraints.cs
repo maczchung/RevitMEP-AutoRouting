@@ -84,6 +84,8 @@ namespace MEPAutoRouting.UI.ViewModels
                 case "SelectedType":
                 case "SelectedDiscipline":
                     ReloadSizes();
+                    Notify(nameof(RouteBlockedReason));   // v4.7 (ISS-016) – "Select a segment type." guard refresh
+                    CommandManager.InvalidateRequerySuggested();
                     break;
                 case "SelectedSystemType":
                     HandleSystemTypeChanged();
@@ -125,6 +127,7 @@ namespace MEPAutoRouting.UI.ViewModels
                 if (ConstraintOptions.Slope.Enabled == value) return;
                 ConstraintOptions.Slope.Enabled = value;
                 Notify(nameof(SlopeEnabled)); Notify(nameof(SlopeText));
+                ClearRoutePreview();   // v4.7 (ISS-012)
             }
         }
 
@@ -141,6 +144,7 @@ namespace MEPAutoRouting.UI.ViewModels
                 }
                 ConstraintOptions.Slope.Value = v;
                 Notify(nameof(SlopeValue)); Notify(nameof(SlopeText));
+                ClearRoutePreview();   // v4.7 (ISS-012)
             }
         }
 
@@ -154,13 +158,14 @@ namespace MEPAutoRouting.UI.ViewModels
                 ConstraintOptions.Slope.Unit = value;
                 if (g > 0) ConstraintOptions.Slope.Value = Math.Round(value == SlopeUnit.Percent ? g * 100 : 1 / g, 2);
                 Notify(nameof(SlopeUnit)); Notify(nameof(SlopeValue)); Notify(nameof(SlopeText));
+                ClearRoutePreview();   // v4.7 (ISS-012)
             }
         }
 
         public FlowDirection SlopeFlow
         {
             get => ConstraintOptions.Slope.Flow;
-            set { ConstraintOptions.Slope.Flow = value; Notify(nameof(SlopeFlow)); }
+            set { ConstraintOptions.Slope.Flow = value; Notify(nameof(SlopeFlow)); ClearRoutePreview(); }   // v4.7 (ISS-012)
         }
 
         public string SlopeText => ConstraintOptions.Slope.Display;
@@ -235,6 +240,7 @@ namespace MEPAutoRouting.UI.ViewModels
                 _boundary = value;
                 Notify(nameof(Boundary)); Notify(nameof(HasBoundary));
                 Notify(nameof(BoundaryText)); Notify(nameof(BoundaryDetailText)); Notify(nameof(BoundarySummaryText));
+                ClearRoutePreview();   // v4.7 (ISS-012)
             }
         }
 
@@ -359,6 +365,7 @@ namespace MEPAutoRouting.UI.ViewModels
         {
             Notify(nameof(PipeSizeText)); Notify(nameof(SelectedListSize));
             Notify(nameof(SizeSummaryText)); Notify(nameof(RouteBlockedReason));
+            ClearRoutePreview();   // v4.7 (ISS-012) – size changes invalidate the preview
             CommandManager.InvalidateRequerySuggested();
         }
 
@@ -447,6 +454,7 @@ namespace MEPAutoRouting.UI.ViewModels
             Source == null ? "Source connector is not picked."
           : Target == null ? "Target connector is not picked."
           : IsBusy ? "Another routing job is still running."
+          : SelectedType == null ? "Select a segment type."
           : !MatchSize && PipeSizeMm <= 0 ? "Pipe size is not set – enter a size or tick 'Match source'."
           : null;
     }

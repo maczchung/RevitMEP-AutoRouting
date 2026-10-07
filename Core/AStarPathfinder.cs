@@ -54,6 +54,9 @@ namespace MEPAutoRouting.Core
 
         private double? _verticalMinFt, _verticalMaxFt;
 
+        // v4.7 (ISS-004) – obstacle boxes used by the last FindPath call, retained for post-slope re-validation.
+        private List<BoundingBoxXYZ> _usedObstacles;
+
         /// <summary>v4.6 – nodes outside [minFt, maxFt] are treated as blocked by BFS and A* alike.</summary>
         public void SetVerticalLimits(double minFt, double maxFt)
         {
@@ -109,6 +112,7 @@ namespace MEPAutoRouting.Core
                 XYZ normalizedStartDir = NormalizeToMajorAxis(startDir);
                 ObstacleResult obstacleResult = GetFilteredObstacles(box);
                 List<BoundingBoxXYZ> obstacles = obstacleResult.UsedObstacles;
+                _usedObstacles = obstacles;
 
                 var grid = new Dictionary<string, AStarNode>();
                 AStarNode startNode = GetOrCreateNode(grid, start, obstacles, start, end);
@@ -473,6 +477,34 @@ namespace MEPAutoRouting.Core
             if (path == null || path.Count < 2) return true;
             for (int i = 0; i < path.Count - 1; i++)
                 if (IsSegmentBlocked(path[i], path[i + 1], obstacles, start, end)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// v4.7 (ISS-004) – true when the segment hits a column / framing box from the last search.
+        /// Same box test and escape zone as CheckIfObstacle; walls, boundary and the vertical band
+        /// are checked separately by RouteService.
+        /// </summary>
+        public bool SegmentHitsObstacleBox(XYZ p1, XYZ p2, XYZ start, XYZ end)
+        {
+            if (_usedObstacles == null || p1 == null || p2 == null) return false;
+            double length = p1.DistanceTo(p2);
+            if (length < 1e-9) return false;
+            int n = Math.Max(4, (int)Math.Ceiling(length / (GridSize * SegmentSampleFactor)));
+            double tol = GridSize * ObstacleToleranceFactor;
+            for (int i = 0; i <= n; i++)
+            {
+                XYZ p = p1 + (p2 - p1) * ((double)i / n);
+                if (p.DistanceTo(start) < GridSize * EscapeZoneCells || p.DistanceTo(end) < GridSize * EscapeZoneCells) continue;
+                foreach (BoundingBoxXYZ bb in _usedObstacles)
+                {
+                    if (bb == null) continue;
+                    if (p.X >= bb.Min.X - tol && p.X <= bb.Max.X + tol &&
+                        p.Y >= bb.Min.Y - tol && p.Y <= bb.Max.Y + tol &&
+                        p.Z >= bb.Min.Z - tol && p.Z <= bb.Max.Z + tol)
+                        return true;
+                }
+            }
             return false;
         }
 

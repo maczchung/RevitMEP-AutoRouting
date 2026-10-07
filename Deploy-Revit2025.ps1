@@ -6,6 +6,7 @@ $root   = $PSScriptRoot
 $proj   = Join-Path $root "MEPAutoRouting.csproj"
 $target = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2025"
 $old    = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2024\MEPAutoRouting.addin"
+$oldSub = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2025\MEPAutoRouting"
 
 dotnet build $proj -c $Configuration
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
@@ -20,4 +21,5 @@ Get-ChildItem $out -Filter *.dll |
 Copy-Item (Join-Path $root "MEPAutoRouting.addin") $target -Force
 
 if (Test-Path $old) { Remove-Item $old -Force; Write-Host "Removed old 2024 manifest" -ForegroundColor Yellow }
+if (Test-Path $oldSub) { Remove-Item $oldSub -Recurse -Force; Write-Host "Removed legacy 2025\MEPAutoRouting subfolder" -ForegroundColor Yellow }
 Write-Host "Done -> $target" -ForegroundColor Green

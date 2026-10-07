@@ -4,3 +4,11 @@ obj/
 *.user
 *.suo
 *.zip
+
+bin/
+obj/
+.vs/
+
+bin/
+obj/
+.vs/

@@ -9,9 +9,7 @@ namespace MEPAutoRouting.UI.ViewModels
     public class UserSettings
     {
         public Discipline Discipline { get; set; } = Discipline.Pipe;
-        public RouteStrategy Strategy { get; set; } = RouteStrategy.XThenY;
         public double LeadMm { get; set; } = 150;
-        public double ElevationMm { get; set; } = 3000;
         public double MinSegmentMm { get; set; } = 100;
         public bool MatchSize { get; set; } = true;
         public bool AddFittings { get; set; } = true;

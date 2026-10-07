@@ -16,19 +16,22 @@ namespace MEPAutoRouting.Routing
 
     /// <summary>
     /// All Revit API work from the modeless window goes through here (valid API context).
+    /// v4.8 (ISS-006) – the request is captured by the queued closure, not by a shared field.
     /// </summary>
     public class RoutingEventHandler : IExternalEventHandler
     {
-        public RoutingRequest Request { get; set; }
         public MainViewModel ViewModel { get; set; }
 
         public string GetName() => "MEP Auto Routing";
 
-        public void Execute(UIApplication app)
+        // IExternalEventHandler entry – no shared request field, so this path does nothing;
+        // all work arrives via the closure-based overload below.
+        public void Execute(UIApplication app) { }
+
+        /// <summary>Executes the request captured at enqueue time (no shared Request field).</summary>
+        public void Execute(UIApplication app, RoutingRequest req)
         {
             var vm = ViewModel;
-            var req = Request;
-            Request = RoutingRequest.None;
             if (vm == null) return;
 
             UIDocument uidoc = app.ActiveUIDocument;

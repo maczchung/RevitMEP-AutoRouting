@@ -29,6 +29,12 @@ namespace MEPAutoRouting
 
         private static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "MEPAutoRouting", "constraints.json");
+
+        // v4.7 (ISS-002) – pre-1.5.0 builds wrote RoutingOptions into settings.json last,
+        // so migrate once from there when constraints.json does not exist yet.
+        private static string LegacyFilePath => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "MEPAutoRouting", "settings.json");
 
         public static RoutingOptions Load()
@@ -37,6 +43,16 @@ namespace MEPAutoRouting
             {
                 if (File.Exists(FilePath))
                     return JsonSerializer.Deserialize<RoutingOptions>(File.ReadAllText(FilePath)) ?? new();
+
+                if (File.Exists(LegacyFilePath))
+                {
+                    var migrated = JsonSerializer.Deserialize<RoutingOptions>(File.ReadAllText(LegacyFilePath));
+                    if (migrated != null)
+                    {
+                        migrated.Save();
+                        return migrated;
+                    }
+                }
             }
             catch { }
             return new RoutingOptions();

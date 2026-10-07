@@ -78,7 +78,8 @@ namespace MEPAutoRouting.Core
                     if (linkDoc == null)
                         continue;
 
-                    Transform linkTransform = linkInstance.GetTransform();
+                    // v4.8 (ISS-017) – GetTotalTransform matches WallObstacleCollector / BoundaryPicker
+                    Transform linkTransform = linkInstance.GetTotalTransform();
 
                     FilteredElementCollector linkedElements =
                         new FilteredElementCollector(linkDoc)

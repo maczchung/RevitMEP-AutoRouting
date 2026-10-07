@@ -25,6 +25,7 @@ namespace MEPAutoRouting.Routing
         public bool AddFittings { get; init; } = true;
         public bool ConnectEnds { get; init; } = true;
         public bool Commit { get; init; } = true;
+        public bool SelectAfterRoute { get; init; } = false;   // v4.8 (ISS-015)
     }
 
     public static class RouteService
@@ -51,6 +52,17 @@ namespace MEPAutoRouting.Routing
                 return result;
             }
 
+            // v4.7 (ISS-014) – same connector / same point guard, before any pathfinding
+            bool sameConnector = request.Source.OwnerId == request.Target.OwnerId
+                              && request.Source.ConnectorId == request.Target.ConnectorId;
+            bool samePoint = request.Source.Origin != null && request.Target.Origin != null
+                          && request.Source.Origin.DistanceTo(request.Target.Origin) < Geom.MmToFt(1);
+            if (sameConnector || samePoint)
+            {
+                result.Problems.Add(RouteProblem.Error("Source and target are the same connector."));
+                return result;
+            }
+
             Document doc = uidoc.Document;
             Connector sourceConnector = request.Source.Resolve(doc);
             Connector targetConnector = request.Target.Resolve(doc);
@@ -71,6 +83,24 @@ namespace MEPAutoRouting.Routing
             double minJog = Math.Max(Geom.MmToFt(100), radius * 6);
             double minLead = Math.Max(Geom.MmToFt(75), radius * 4);
             AlignLeads(ref source, ref target, minJog, minLead, result.Problems, log);
+
+            // v4.8 (Task 5) – warn when the route size differs from a round connector size (no reducer is created)
+            if (request.Size.HasValue)
+            {
+                double routeMm = request.Size.Value.NominalMm;
+                void CheckSize(ConnectorInfo info, ConnectorEndpoint ep, string label)
+                {
+                    if (info.Shape == ConnectorProfileType.Round && ep.Radius > 0)
+                    {
+                        double connMm = Geom.FtToMm(ep.Radius * 2);
+                        if (Math.Abs(connMm - routeMm) > 0.5)
+                            result.Problems.Add(RouteProblem.Warn(
+                                $"Route size {routeMm:0.#} mm differs from {label} connector Ø{connMm:0.#} mm – no reducer will be created."));
+                    }
+                }
+                CheckSize(request.Source, source, "source");
+                CheckSize(request.Target, target, "target");
+            }
 
             // v4.6 – configurable margin around the route region (default 2000 mm).
             //        Walls are collected over region + margin so walls enclosing the room are included.
@@ -164,7 +194,22 @@ namespace MEPAutoRouting.Routing
                 allowSlope: false));
 
             if (options.Slope != null && options.Slope.Enabled)
-                result.Path = SlopeApplier.Apply(result.Path, options.Slope, result.Problems);
+            {
+                // v4.8 (Task 4) – gravity systems: uphill verticals are Errors; pressurised systems: Warn.
+                bool strictGravity = false;
+                if (doc.GetElement(request.SystemTypeId) is Autodesk.Revit.DB.Plumbing.PipingSystemType pst)
+                {
+                    strictGravity = SlopeSettings.IsGravitySystem(pst, out bool isPressurised);
+                    if (isPressurised)
+                        result.Problems.Add(RouteProblem.Warn(
+                            $"Slope is applied to a pressurised system ({pst.Name})."));
+                }
+
+                result.Path = SlopeApplier.Apply(result.Path, options.Slope, result.Problems,
+                    target.Connector?.CoordinateSystem?.BasisZ, strictGravity);
+                ValidateSlopedPath(result.Path, constraints, finder, source, target, zLimitMin, zLimitMax,
+                    Geom.MmToFt(request.MinSegmentMm > 0 ? request.MinSegmentMm : 0), result.Problems, log);
+            }
 
             log?.Invoke($"Path ready: {result.Path.Count} points, slope {options.Slope?.Display ?? "None"}.");
 
@@ -207,10 +252,19 @@ namespace MEPAutoRouting.Routing
                     result.CreatedSegments = built.Segments;
                     result.CreatedElbows = built.Fittings;
                     result.FittingFailures = built.FittingFailures;
+                    result.Created.AddRange(built.Created);
                     log?.Invoke($"Elbows: {built.Fittings} created, {built.FittingFailures} failed.");
+
+                    // v4.8 (ISS-026) – any elbow failure rolls the whole route back; nothing stays in the model
                     if (built.FittingFailures > 0)
-                        result.Problems.Add(RouteProblem.Warn(
-                            $"{built.FittingFailures} elbow(s) could not be created – see OUTPUT for position, angle and segment lengths."));
+                    {
+                        transaction.RollBack();
+                        foreach (RouteBuilder.FittingFailureInfo f in built.FittingFailureDetails)
+                            log?.Invoke($"Elbow failure detail: #{f.Index}, {f.AngleDeg:0.00}°, {f.Detail}.");
+                        result.Problems.Add(RouteProblem.Error(
+                            $"Route not created: {built.FittingFailures} elbow(s) failed. See OUTPUT for details."));
+                        return result;
+                    }
 
                     TransactionStatus status = transaction.Commit();
                     foreach (string warning in failures.Warnings) result.Problems.Add(RouteProblem.Warn(warning));
@@ -222,6 +276,17 @@ namespace MEPAutoRouting.Routing
                         return result;
                     }
                     result.Committed = true;
+
+                    // v4.8 (ISS-015) – select the created segments + fittings in Revit
+                    if (request.SelectAfterRoute && result.Created.Count > 0)
+                    {
+                        try
+                        {
+                            uidoc.Selection.SetElementIds(result.Created);
+                            log?.Invoke($"Selected {result.Created.Count} created element(s).");
+                        }
+                        catch (Exception selEx) { log?.Invoke($"Selection failed: {selEx.Message}"); }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -232,6 +297,62 @@ namespace MEPAutoRouting.Routing
             }
 
             return result;
+        }
+
+        // ------------------------------------------------------------------ v4.7 post-slope validation
+
+        /// <summary>
+        /// v4.7 (ISS-004) – re-validate the path AFTER the slope is applied: axis-alignment with slope
+        /// allowed, wall / boundary re-sampling, the vertical band and the pathfinder's obstacle boxes.
+        /// Any failure is an Error and therefore blocks commit – nothing is created.
+        /// </summary>
+        private static void ValidateSlopedPath(List<XYZ> path, RoutingConstraints constraints, AStarPathfinder finder,
+                                               ConnectorEndpoint source, ConnectorEndpoint target,
+                                               double zLimitMin, double zLimitMax, double minSegmentFt,
+                                               List<RouteProblem> problems, Action<string> log)
+        {
+            int errorsBefore = problems.Count(p => p.IsError);
+
+            // (a) geometry + wall / boundary re-sampling, slope-aware
+            problems.AddRange(PathValidator.Validate(path, minSegmentFt, constraints.IsBlocked,
+                Geom.MmToFt(50) / 2.0, allowSlope: true));
+
+            double zTol = Geom.MmToFt(1);
+            string limits = $"limit {Geom.FtToMm(zLimitMin):0}-{Geom.FtToMm(zLimitMax):0} mm";
+
+            // (b) vertical band – every path point
+            for (int i = 0; i < path.Count; i++)
+            {
+                if (path[i].Z < zLimitMin - zTol || path[i].Z > zLimitMax + zTol)
+                    problems.Add(RouteProblem.Error(
+                        $"Sloped route leaves the permitted vertical range at point {i} " +
+                        $"(Z = {Geom.FtToMm(path[i].Z):0} mm, {limits}).", i));
+            }
+
+            // (b) + (c) sampled points along every segment: vertical band and column / framing boxes
+            for (int i = 0; i < path.Count - 1; i++)
+            {
+                double len = path[i].DistanceTo(path[i + 1]);
+                int n = Math.Max(1, (int)Math.Ceiling(len / (Geom.MmToFt(50) / 2.0)));
+                for (int k = 1; k < n; k++)
+                {
+                    XYZ p = path[i] + (path[i + 1] - path[i]) * ((double)k / n);
+                    if (p.Z < zLimitMin - zTol || p.Z > zLimitMax + zTol)
+                    {
+                        problems.Add(RouteProblem.Error(
+                            $"Sloped route leaves the permitted vertical range at segment {i} " +
+                            $"(Z = {Geom.FtToMm(p.Z):0} mm, {limits}).", i));
+                        break;
+                    }
+                }
+
+                if (finder != null && finder.SegmentHitsObstacleBox(path[i], path[i + 1], source.Origin, target.Origin))
+                    problems.Add(RouteProblem.Error(
+                        $"Sloped route collides with a column or framing element at segment {i}.", i));
+            }
+
+            int errors = problems.Count(p => p.IsError) - errorsBefore;
+            log?.Invoke(errors == 0 ? "Post-slope validation: OK" : $"Post-slope validation: {errors} error(s).");
         }
 
         // ------------------------------------------------------------------ v4.5 vertical limits

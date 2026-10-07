@@ -516,19 +516,9 @@
                                     <StackPanel Margin="24,16,24,16" MaxWidth="720" HorizontalAlignment="Left">
                                         <TextBlock Text="Routing" FontSize="22" Foreground="{StaticResource Fg.Bright}" Margin="0,0,0,14"/>
 
-                                        <TextBlock Style="{StaticResource Text.SettingTitle}"><Run Text="Routing: " Foreground="{StaticResource Fg.Muted}"/><Run Text="Strategy"/></TextBlock>
-                                        <TextBlock Text="{Binding StrategyDescription}" Style="{StaticResource Text.Muted}" Margin="0,4,0,6"/>
-                                        <ComboBox ItemsSource="{Binding Strategies}" SelectedValuePath="Value" SelectedValue="{Binding Strategy}"
-                                                  Width="260" HorizontalAlignment="Left"/>
-
-                                        <TextBlock Style="{StaticResource Text.SettingTitle}" Margin="0,22,0,0"><Run Text="Routing: " Foreground="{StaticResource Fg.Muted}"/><Run Text="Lead Length"/></TextBlock>
+                                        <TextBlock Style="{StaticResource Text.SettingTitle}"><Run Text="Routing: " Foreground="{StaticResource Fg.Muted}"/><Run Text="Lead Length"/></TextBlock>
                                         <TextBlock Text="Straight run (mm) out of each connector before the first turn." Style="{StaticResource Text.Muted}" Margin="0,4,0,6"/>
                                         <TextBox Text="{Binding LeadMm, UpdateSourceTrigger=LostFocus}" Width="160" HorizontalAlignment="Left"/>
-
-                                        <TextBlock Style="{StaticResource Text.SettingTitle}" Margin="0,22,0,0"><Run Text="Routing: " Foreground="{StaticResource Fg.Muted}"/><Run Text="Elevation Offset"/></TextBlock>
-                                        <TextBlock Text="Run height (mm) above the reference level. Used by 'At fixed elevation' only." Style="{StaticResource Text.Muted}" Margin="0,4,0,6"/>
-                                        <TextBox Text="{Binding ElevationMm, UpdateSourceTrigger=LostFocus}" Width="160" HorizontalAlignment="Left"
-                                                 IsEnabled="{Binding IsElevationMode}"/>
 
                                         <TextBlock Style="{StaticResource Text.SettingTitle}" Margin="0,22,0,0"><Run Text="Routing: " Foreground="{StaticResource Fg.Muted}"/><Run Text="Minimum Segment Length"/></TextBlock>
                                         <TextBlock Text="Segments shorter than this (mm) are flagged in PROBLEMS – elbows usually fail." Style="{StaticResource Text.Muted}" Margin="0,4,0,6"/>

@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <RevitAddIns>
+  <AddIn Type="Application">
+    <Name>MEP Auto Routing</Name>
+    <Description>MEP Auto Routing - ribbon tab and panel (MEP Tools / Auto Routing).</Description>
+    <!-- Relative path: the DLL and manifest share the Revit 2025 Addins folder. -->
+    <Assembly>MEPAutoRouting.dll</Assembly>
+    <AddInId>71C1852B-00EF-4528-9176-D6A4C7B353D4</AddInId>
+    <FullClassName>MEPAutoRouting.Core.App</FullClassName>
+    <VendorId>CUNDALL.HK</VendorId>
+    <VendorDescription>Cundall HK · Matthew Kwok</VendorDescription>
+  </AddIn>
   <AddIn Type="Command">
     <Text>Unified Routing</Text>
     <Description>MEP Auto Routing - Pipe / Conduit</Description>

@@ -18,7 +18,7 @@
     <Product>MEP Auto Routing</Product>
     <Copyright>© 2026 Cundall HK. Developed by Matthew Kwok.</Copyright>
     <AssemblyTitle>MEP Auto Routing for Revit 2025</AssemblyTitle>
-    <Version>1.4.0</Version>
+    <Version>1.6.0</Version>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
     <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2025</RevitAddinsDir>
   </PropertyGroup>
@@ -43,14 +43,15 @@
     <None Include="MEPAutoRouting.addin" />
   </ItemGroup>
 
-  <!-- Auto-deploy after Debug build. Close Revit first (DLL is locked while Revit runs). -->
+  <!-- Auto-deploy after Debug build. Close Revit first (DLL is locked while Revit runs).
+       Deploys to the Addins ROOT - the manifest resolves MEPAutoRouting.dll relative to itself. -->
   <Target Name="DeployToRevit" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
     <ItemGroup>
-      <DeployFiles Include="$(TargetDir)*.dll;$(TargetDir)*.pdb" />
+      <DeployFiles Include="$(TargetDir)MEPAutoRouting.dll;$(TargetDir)MEPAutoRouting.pdb" />
     </ItemGroup>
-    <MakeDir Directories="$(RevitAddinsDir)\MEPAutoRouting" />
-    <Copy SourceFiles="@(DeployFiles)" DestinationFolder="$(RevitAddinsDir)\MEPAutoRouting" SkipUnchangedFiles="true" ContinueOnError="true" />
-    <Copy SourceFiles="MEPAutoRouting.addin" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="true" />
-    <Message Importance="high" Text="Deployed to $(RevitAddinsDir)\MEPAutoRouting" />
+    <MakeDir Directories="$(RevitAddinsDir)" />
+    <Copy SourceFiles="@(DeployFiles)" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="true" ContinueOnError="WarnAndContinue" />
+    <Copy SourceFiles="MEPAutoRouting.addin" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="true" ContinueOnError="WarnAndContinue" />
+    <Message Importance="high" Text="Deployed to $(RevitAddinsDir)" />
   </Target>
 </Project>

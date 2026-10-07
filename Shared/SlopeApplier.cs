@@ -18,6 +18,14 @@ namespace MEPAutoRouting
         private const double Tol = 1e-6;
 
         public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems)
+            => Apply(input, s, problems, null, false);
+
+        /// <summary>
+        /// v4.8 (Task 4) – targetDirection excludes the fixed end lead when the target connector faces
+        /// downward into the target; strictGravity turns "rises in flow direction" into an Error.
+        /// </summary>
+        public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems,
+                                      XYZ targetDirection, bool strictGravity)
         {
             var pts = PathUtils.RemoveDuplicates(input);
             if (s == null || !s.Enabled || s.Gradient <= 0 || pts.Count < 2) return pts;
@@ -42,24 +50,44 @@ namespace MEPAutoRouting
                 while (k < segCount && IsHoriz(k)) k++;
                 int b = k;
 
+                // v4.8 (Task 1) – the connector leads (origin → lead, lead → origin) stay parallel to
+                //                 the connector axis; only interior horizontal runs take the gradient.
                 bool touchesStart = a == 0, touchesEnd = b == n - 1;
+                bool aFixed = touchesStart, bFixed = touchesEnd;
                 if (touchesStart && touchesEnd)
                 {
-                    double total = Enumerable.Range(a, b - a).Sum(HLen) * g;
-                    problems.Add(RouteProblem.Error(
-                        $"The whole route is horizontal with both ends fixed – there is no vertical segment to take up the fall (about {Geom.FtToMm(total):0} mm needed)."));
+                    // Whole path is a single horizontal run: both ends fixed -> total fall = 0, no error.
                     continue;
                 }
 
-                if (touchesEnd)
+                if (bFixed)
                 {
                     double rise = 0;
-                    for (int i = b - 1; i >= a; i--) { rise += HLen(i); z[i] = pts[b].Z + rise * g; }
+                    for (int i = b - 1; i >= a; i--)
+                    {
+                        rise += HLen(i);
+                        double target = pts[b].Z + rise * g;
+                        if (aFixed && i == a) continue;   // do not tilt the source lead
+                        z[i] = target;
+                    }
+                }
+                else if (aFixed)
+                {
+                    double drop = 0;
+                    for (int i = a + 1; i <= b; i++)
+                    {
+                        drop += HLen(i - 1);
+                        z[i] = pts[a].Z - drop * g;
+                    }
                 }
                 else
                 {
                     double drop = 0;
-                    for (int i = a + 1; i <= b; i++) { drop += HLen(i - 1); z[i] = pts[a].Z - drop * g; }
+                    for (int i = a + 1; i <= b; i++)
+                    {
+                        drop += HLen(i - 1);
+                        z[i] = z[a] - drop * g;
+                    }
                 }
             }
 
@@ -73,8 +101,19 @@ namespace MEPAutoRouting
                         $"Vertical segment {Label(i)} is only {Geom.FtToMm(Math.Abs(newDz)):0} mm after slope (min {s.MinVerticalMm:0} mm). " +
                         "Raise the source, lower the run or reduce the slope.", Label(i)));
                 else if (newDz > 0)
-                    problems.Add(RouteProblem.Warn(
-                        $"Segment {Label(i)} rises in the flow direction (not recommended for gravity drainage).", Label(i)));
+                {
+                    // v4.8 (Task 4) – exclude the fixed end lead when the target connector faces downward
+                    int origIndex = reversed ? (segCount - 1 - i) : i;
+                    bool isEndLead = origIndex == segCount - 1;
+                    bool targetFacesDown = targetDirection != null && targetDirection.Z < -0.5;
+                    if (isEndLead && targetFacesDown) continue;
+
+                    string riseMsg = $"Segment {Label(i)} rises {Geom.FtToMm(newDz):0} mm in the flow direction";
+                    if (strictGravity)
+                        problems.Add(RouteProblem.Error(riseMsg + " – gravity drainage cannot flow uphill.", Label(i)));
+                    else
+                        problems.Add(RouteProblem.Warn(riseMsg + " (not recommended for gravity drainage).", Label(i)));
+                }
             }
 
             var result = pts.Select((p, i) => new XYZ(p.X, p.Y, z[i])).ToList();
