@@ -123,6 +123,7 @@ namespace MEPAutoRouting.Routing
         public int CreatedSegments { get; set; }
         public int CreatedElbows { get; set; }
         public bool Committed { get; set; }
+        public double AppliedFallFt { get; set; } = -1;   // v4.8.1 (Task 1) – slope actually applied; -1 = not sloped
         public List<ElementId> Created { get; } = new List<ElementId>();
         public int Segments { get; set; }
         public int Fittings { get; set; }

@@ -18,7 +18,7 @@
     <Product>MEP Auto Routing</Product>
     <Copyright>© 2026 Cundall HK. Developed by Matthew Kwok.</Copyright>
     <AssemblyTitle>MEP Auto Routing for Revit 2025</AssemblyTitle>
-    <Version>1.6.0</Version>
+    <Version>1.6.1</Version>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
     <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2025</RevitAddinsDir>
   </PropertyGroup>

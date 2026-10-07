@@ -84,23 +84,26 @@ namespace MEPAutoRouting.Routing
             double minLead = Math.Max(Geom.MmToFt(75), radius * 4);
             AlignLeads(ref source, ref target, minJog, minLead, result.Problems, log);
 
-            // v4.8 (Task 5) – warn when the route size differs from a round connector size (no reducer is created)
-            if (request.Size.HasValue)
+            // v4.8.1 (Task 2/3) – effective route diameter: matched to source when no explicit size is given
+            double routeMm = request.Size?.NominalMm ?? Geom.FtToMm(source.Radius * 2);
+            if (request.Size == null)
+                log?.Invoke($"Pipe size: {routeMm:0.#} mm (matched source Ø{Geom.FtToMm(source.Radius * 2):0.#}, snapped to type catalog)");
+            else
+                log?.Invoke($"Pipe size: {routeMm:0.#} mm.");
+
+            // v4.8 (Task 5) / v4.8.1 (Task 3) – warn for ANY size mismatch (matched or explicit); no reducer is created
+            void CheckSize(ConnectorEndpoint ep, string label)
             {
-                double routeMm = request.Size.Value.NominalMm;
-                void CheckSize(ConnectorInfo info, ConnectorEndpoint ep, string label)
+                if (ep.Radius > 0)
                 {
-                    if (info.Shape == ConnectorProfileType.Round && ep.Radius > 0)
-                    {
-                        double connMm = Geom.FtToMm(ep.Radius * 2);
-                        if (Math.Abs(connMm - routeMm) > 0.5)
-                            result.Problems.Add(RouteProblem.Warn(
-                                $"Route size {routeMm:0.#} mm differs from {label} connector Ø{connMm:0.#} mm – no reducer will be created."));
-                    }
+                    double connMm = Geom.FtToMm(ep.Radius * 2);
+                    if (Math.Abs(connMm - routeMm) > 0.5)
+                        result.Problems.Add(RouteProblem.Warn(
+                            $"Route size {routeMm:0.#} mm differs from {label} connector Ø{connMm:0.#} mm – no reducer will be created."));
                 }
-                CheckSize(request.Source, source, "source");
-                CheckSize(request.Target, target, "target");
             }
+            CheckSize(source, "source");
+            CheckSize(target, "target");
 
             // v4.6 – configurable margin around the route region (default 2000 mm).
             //        Walls are collected over region + margin so walls enclosing the room are included.
@@ -206,7 +209,8 @@ namespace MEPAutoRouting.Routing
                 }
 
                 result.Path = SlopeApplier.Apply(result.Path, options.Slope, result.Problems,
-                    target.Connector?.CoordinateSystem?.BasisZ, strictGravity);
+                    target.Connector?.CoordinateSystem?.BasisZ, strictGravity, out double appliedFallFt);
+                result.AppliedFallFt = appliedFallFt;   // v4.8.1 (Task 1) – summary shows the applied fall
                 ValidateSlopedPath(result.Path, constraints, finder, source, target, zLimitMin, zLimitMax,
                     Geom.MmToFt(request.MinSegmentMm > 0 ? request.MinSegmentMm : 0), result.Problems, log);
             }

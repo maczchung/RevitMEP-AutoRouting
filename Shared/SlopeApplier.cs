@@ -26,8 +26,17 @@ namespace MEPAutoRouting
         /// </summary>
         public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems,
                                       XYZ targetDirection, bool strictGravity)
+            => Apply(input, s, problems, targetDirection, strictGravity, out _);
+
+        /// <summary>
+        /// v4.8.1 (Task 1) – additionally reports the actually applied fall (ft) and raises an
+        /// Error (gravity) / Warning (non-gravity) when the route cannot absorb the required fall.
+        /// </summary>
+        public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems,
+                                      XYZ targetDirection, bool strictGravity, out double appliedFallFt)
         {
             var pts = PathUtils.RemoveDuplicates(input);
+            appliedFallFt = 0;
             if (s == null || !s.Enabled || s.Gradient <= 0 || pts.Count < 2) return pts;
 
             bool reversed = s.Flow == FlowDirection.TargetToSource;
@@ -118,6 +127,26 @@ namespace MEPAutoRouting
 
             var result = pts.Select((p, i) => new XYZ(p.X, p.Y, z[i])).ToList();
             if (reversed) result.Reverse();
+
+            // v4.8.1 (Task 1) – report the actually applied fall and fail/warn when the route cannot absorb it
+            appliedFallFt = result.Count < 2 ? 0 : Math.Abs(result[0].Z - result[result.Count - 1].Z);
+            double interiorRunFt = 0;
+            for (int i = 1; i < result.Count - 2; i++)   // interior segments only (leads excluded)
+                if (Math.Abs(result[i + 1].Z - result[i].Z) < Tol)
+                    interiorRunFt += Geom.DistanceXY(result[i], result[i + 1]);
+            double requiredFall = interiorRunFt * g;
+
+            if (requiredFall > Geom.MmToFt(1) && appliedFallFt < requiredFall - Geom.MmToFt(1))
+            {
+                string fallMm = Geom.FtToMm(requiredFall).ToString("0");
+                if (strictGravity)
+                    problems.Add(RouteProblem.Error(
+                        $"Slope cannot be applied: no vertical segment to absorb {fallMm} mm fall."));
+                else
+                    problems.Add(RouteProblem.Warn(
+                        $"Slope {s.Display.Split(' ')[0]} was not applied – route is flat (no vertical segment)."));
+            }
+
             return result;
         }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.8.1 (1.6.1)
+
+- **Task 1** – Slope silently not applied (R-13): `SlopeApplier` now reports the actually applied fall and compares it with the required fall (interior horizontal run × gradient). A flat gravity route raises Error "Slope cannot be applied: no vertical segment to absorb {fall} mm fall." (commit blocked); a non-gravity flat route raises Warning "Slope 1:{N} was not applied – route is flat (no vertical segment)." Summary "Total fall" shows the applied fall (0 mm in this case).
+- **Task 2** – "Match source connector" size is recomputed whenever the source connector changes, the checkbox is toggled, or the segment type / size catalog changes; route start logs "Pipe size: {x} mm (matched source Ø{y}, snapped to type catalog)".
+- **Task 3** – Size-mismatch warning now fires for every route (matched and explicit sizes), comparing the final route diameter with each round connector's nominal diameter at 0.5 mm tolerance; warnings are reported even when an error is also present.
+
 ## v4.8 (1.6.0)
 
 - **Task 1** – Slope no longer tilts the connector leads: the first segment (origin → lead) and last segment (lead → origin) stay parallel to the connector axis; only interior horizontal runs take the gradient; a single horizontal run yields total fall 0 with no error.

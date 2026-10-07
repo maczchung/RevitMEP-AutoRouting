@@ -402,7 +402,9 @@ namespace MEPAutoRouting.UI.ViewModels
             Problems.Clear();
             foreach (RouteProblem problem in result.Problems) Problems.Add(problem);
             UpdateSummary(Math.Max(0, result.Path.Count - 1), total);
-            _totalFallFt = result.Path.Count < 2 ? 0 : Math.Abs(result.Path[0].Z - result.Path[result.Path.Count - 1].Z);
+            // v4.8.1 (Task 1) – show the actually applied fall (0 when the slope could not be applied)
+            _totalFallFt = result.AppliedFallFt >= 0 ? result.AppliedFallFt
+                : result.Path.Count < 2 ? 0 : Math.Abs(result.Path[0].Z - result.Path[result.Path.Count - 1].Z);
             OnPropertyChanged(nameof(ProblemCount));
             OnPropertyChanged(nameof(ErrorCount));
             OnPropertyChanged(nameof(WarningCount));

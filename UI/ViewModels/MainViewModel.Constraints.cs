@@ -84,6 +84,7 @@ namespace MEPAutoRouting.UI.ViewModels
                 case "SelectedType":
                 case "SelectedDiscipline":
                     ReloadSizes();
+                    RefreshMatchSize();   // v4.8.1 (Task 2) – size catalog differs per type
                     Notify(nameof(RouteBlockedReason));   // v4.7 (ISS-016) – "Select a segment type." guard refresh
                     CommandManager.InvalidateRequerySuggested();
                     break;
@@ -92,11 +93,16 @@ namespace MEPAutoRouting.UI.ViewModels
                     break;
                 case "MatchSize":
                     Notify(nameof(IsSizeInputEnabled));
+                    RefreshMatchSize();   // v4.8.1 (Task 2) – recompute when the checkbox is toggled
                     Notify(nameof(SizeSummaryText));
                     Notify(nameof(RouteBlockedReason));
                     CommandManager.InvalidateRequerySuggested();
                     break;
                 case "Source":
+                    RefreshMatchSize();   // v4.8.1 (Task 2) – matched size follows the source connector
+                    Notify(nameof(RouteBlockedReason));
+                    CommandManager.InvalidateRequerySuggested();
+                    break;
                 case "Target":
                 case "IsBusy":
                     Notify(nameof(RouteBlockedReason));
@@ -312,6 +318,20 @@ namespace MEPAutoRouting.UI.ViewModels
 
         public double PipeSizeMm => ConstraintOptions.PipeSizeMm;
 
+        /// <summary>
+        /// v4.8.1 (Task 2) – with "Match source connector" ticked, PipeSizeMm always tracks the source
+        /// connector size (snapped to the selected type's catalog when one is available).
+        /// </summary>
+        private void RefreshMatchSize()
+        {
+            if (!MatchSize || Source == null || Source.Shape != ConnectorProfileType.Round) return;
+            double mm = Geom.FtToMm(Source.Radius * 2);
+            if (_sizes.Count > 0) mm = PipeSizeCatalog.Snap(mm, _sizes, out _).NominalMm;
+            if (Math.Abs(ConstraintOptions.PipeSizeMm - mm) < 0.05) { NotifySize(); return; }
+            ConstraintOptions.PipeSizeMm = mm;
+            NotifySize();
+        }
+
         public string PipeSizeText
         {
             get => PipeSizeMm > 0 ? PipeSizeMm.ToString("0.#", CultureInfo.InvariantCulture) : "";
@@ -419,6 +439,7 @@ namespace MEPAutoRouting.UI.ViewModels
                 }
             }
             NotifySize();
+            RefreshMatchSize();   // v4.8.1 (Task 2) – re-snap the matched size against the new catalog
         }
 
         public PipeSizeInfo? ResolveRouteSize(IList<RouteProblem> problems)
