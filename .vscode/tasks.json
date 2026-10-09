@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Handover: Build + Generate Report (local)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-Command",
+        "dotnet build MEPAutoRouting.sln -c Release -v minimal *> build.log; $o = if ($LASTEXITCODE -eq 0) {'success'} else {'failure'}; ./scripts/Generate-Handover.ps1 -BuildOutcome $o -BuildLog build.log"
+      ],
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Handover: Generate Report only (no build)",
+      "type": "shell",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "./scripts/Generate-Handover.ps1"],
+      "problemMatcher": []
+    }
+  ]
+}

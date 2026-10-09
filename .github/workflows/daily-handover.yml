@@ -1,0 +1,122 @@
+# ============================================================
+#  Daily Handover Report - MEP Auto Routing
+#  Runs every day at 05:00 HKT (21:00 UTC previous day)
+#  Author : Matthew Kwok / Cundall HK
+# ============================================================
+name: Daily Handover Report
+
+on:
+  schedule:
+    - cron: '0 21 * * *'          # 21:00 UTC = 05:00 HKT
+  workflow_dispatch:              # Manual "Run workflow" button
+    inputs:
+      build_mode:
+        description: 'Build mode (dotnet / msbuild / skip)'
+        required: false
+        default: 'dotnet'
+      hours:
+        description: 'Look-back window in hours'
+        required: false
+        default: '24'
+
+permissions:
+  contents: write                 # push the report back to the repo
+  issues: read                    # read open GitHub Issues
+
+concurrency:
+  group: daily-handover
+  cancel-in-progress: false
+
+env:
+  # ---------- EDIT THESE FOR YOUR REPO ----------
+  PROJECT_NAME: 'MEP Auto Routing'
+  SOLUTION_PATH: 'MEPAutoRouting.sln'      # path to .sln or .csproj
+  DEFAULT_BUILD_MODE: 'dotnet'             # dotnet | msbuild | skip
+  DOTNET_VERSION: '8.0.x'                  # Revit 2025 add-ins = .NET 8
+  REPORT_DIR: 'reports'
+  NOTES_FILE: 'docs/HANDOVER_NOTES.md'
+  # ----------------------------------------------
+
+jobs:
+  handover:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve build mode
+        id: mode
+        shell: pwsh
+        run: |
+          $mode = '${{ github.event.inputs.build_mode }}'
+          if ([string]::IsNullOrWhiteSpace($mode)) { $mode = $env:DEFAULT_BUILD_MODE }
+          $hours = '${{ github.event.inputs.hours }}'
+          if ([string]::IsNullOrWhiteSpace($hours)) { $hours = '24' }
+          "mode=$mode"   >> $env:GITHUB_OUTPUT
+          "hours=$hours" >> $env:GITHUB_OUTPUT
+          Write-Host "Build mode: $mode / Look-back: $hours h"
+
+      - name: Setup .NET
+        if: steps.mode.outputs.mode == 'dotnet'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup MSBuild
+        if: steps.mode.outputs.mode == 'msbuild'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build (Release)
+        id: build
+        if: steps.mode.outputs.mode != 'skip'
+        continue-on-error: true       # report must still be generated if build fails
+        shell: pwsh
+        run: |
+          if ('${{ steps.mode.outputs.mode }}' -eq 'msbuild') {
+            msbuild $env:SOLUTION_PATH /restore /p:Configuration=Release /v:minimal *> build.log
+          } else {
+            dotnet build $env:SOLUTION_PATH -c Release -v minimal *> build.log
+          }
+          $code = $LASTEXITCODE
+          Get-Content build.log -Tail 60
+          exit $code
+
+      - name: Generate handover report
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_OUTCOME: ${{ steps.build.outcome || 'skipped' }}
+        run: |
+          ./scripts/Generate-Handover.ps1 `
+            -ProjectName  "$env:PROJECT_NAME" `
+            -OutputDir    "$env:REPORT_DIR" `
+            -NotesFile    "$env:NOTES_FILE" `
+            -BuildOutcome "$env:BUILD_OUTCOME" `
+            -BuildLog     "build.log" `
+            -Hours        ${{ steps.mode.outputs.hours }}
+
+      - name: Commit & push report
+        shell: pwsh
+        run: |
+          git config user.name  "handover-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $env:REPORT_DIR
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host "No report changes."; exit 0 }
+          $hkt = [DateTime]::UtcNow.AddHours(8).ToString('yyyy-MM-dd')
+          git commit -m "[handover] Daily report $hkt [skip ci]"
+          git push
+
+      - name: Upload report as artifact (backup copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: handover-report
+          path: |
+            ${{ env.REPORT_DIR }}/LATEST.md
+            build.log
+          if-no-files-found: ignore
+          retention-days: 30
