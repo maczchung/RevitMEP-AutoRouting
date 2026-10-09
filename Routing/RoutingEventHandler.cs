@@ -21,7 +21,6 @@ namespace MEPAutoRouting.Routing
     public class RoutingEventHandler : IExternalEventHandler
     {
         public MainViewModel ViewModel { get; set; }
-
         public string GetName() => "MEP Auto Routing";
 
         // IExternalEventHandler entry – no shared request field, so this path does nothing;
@@ -33,12 +32,10 @@ namespace MEPAutoRouting.Routing
         {
             var vm = ViewModel;
             if (vm == null) return;
-
             UIDocument uidoc = app.ActiveUIDocument;
             if (uidoc == null) { vm.Log(LogLevel.Error, "No active document."); return; }
             Document doc = uidoc.Document;
             vm.DocumentTitle = doc.Title;
-
             vm.IsBusy = true;
             try
             {
@@ -64,19 +61,50 @@ namespace MEPAutoRouting.Routing
         }
 
         // ------------------------------------------------------------------ pick
+
+        /// <summary>
+        /// v4.8.4 – uses the End connector NEAREST to the pick point (open or connected).
+        /// A connected connector is rejected with a clear message; the add-in never silently
+        /// switches to another open connector, and the previous selection is kept.
+        /// </summary>
         private static void Pick(UIDocument uidoc, MainViewModel vm, bool isSource)
         {
             Domain domain = vm.SelectedDiscipline.ToDomain();
             string label = isSource ? "SOURCE" : "TARGET";
-            vm.Status = $"Pick {label} element in Revit… (Esc to cancel)";
+            vm.Status = $"Pick {label} connector in Revit – click close to the connector… (Esc to cancel)";
 
             Reference r = uidoc.Selection.PickObject(ObjectType.Element,
                 new ConnectorSelectionFilter(domain),
-                $"MEP Auto Routing: pick {label} ({ConnectorUtils.DomainLabel(domain)} connector)");
-
+                $"MEP Auto Routing: pick {label} – click close to the required {ConnectorUtils.DomainLabel(domain)} connector");
             Element e = uidoc.Document.GetElement(r);
-            Connector c = ConnectorUtils.GetNearestOpenConnector(e, r.GlobalPoint, domain);
-            if (c == null) { vm.Log(LogLevel.Error, "No open connector found on picked element."); return; }
+
+            // list every End connector of the picked element
+            List<Connector> ends = ConnectorUtils.GetEndConnectors(e, domain).ToList();
+            vm.Log(LogLevel.Info, $"{label} element {e.Id} has {ends.Count} {ConnectorUtils.DomainLabel(domain)} connector(s):");
+            foreach (Connector ec in ends)
+                vm.Log(LogLevel.Info, $"  {ConnectorInfo.From(ec, e).IdText}: {ConnectorUtils.Describe(ec)}");
+
+            XYZ pickPoint = r.GlobalPoint;
+            if (pickPoint == null)
+                vm.Log(LogLevel.Warn, "Pick point unavailable in this view – using the first open connector. Pick in a 3D or plan view for an exact connector.");
+
+            Connector c = ConnectorUtils.GetNearestEndConnector(e, pickPoint, domain);
+            if (c == null)
+            {
+                vm.Log(LogLevel.Error, $"No {ConnectorUtils.DomainLabel(domain)} connector found on the picked element.");
+                return;
+            }
+
+            if (c.IsConnected)
+            {
+                ElementId other = ConnectorUtils.GetConnectedOwnerId(c);
+                string otherText = other == null || other == ElementId.InvalidElementId ? "another element" : $"element {other}";
+                vm.Log(LogLevel.Error,
+                    $"Connector {ConnectorInfo.From(c, e).IdText} ({ConnectorUtils.Describe(c).Split(',')[0]}) is already connected to {otherText}. " +
+                    $"Disconnect it or pick another connector. {label} was not changed.");
+                vm.Status = $"{label} not changed – connector already connected.";
+                return;
+            }
 
             var info = ConnectorInfo.From(c, e);
             if (isSource) vm.Source = info; else vm.Target = info;
@@ -87,6 +115,7 @@ namespace MEPAutoRouting.Routing
         }
 
         // ------------------------------------------------------------------ types
+
         private static void LoadTypes(Document doc, MainViewModel vm)
         {
             List<TypeItem> Types<T>() where T : Element =>

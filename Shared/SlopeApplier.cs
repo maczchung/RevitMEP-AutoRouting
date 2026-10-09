@@ -6,98 +6,123 @@ using Autodesk.Revit.DB;
 namespace MEPAutoRouting
 {
     /// <summary>
-    /// 將坡度套落 A* 路徑（MergeCollinear 之後）。
-    ///  • 兩端 connector Origin 固定唔郁。
-    ///  • 路徑按垂直段切成「水平 run」。
-    ///  • 最後一個 run 如果接住終點：由終點向上游計（終點固定，上游升高）。
-    ///  • 其他 run：以 run 上游起點做錨，向下游落。
-    ///  • 高度差由相鄰垂直段吸收；垂直段唔夠長或者反轉 → Error。
+    /// Applies the gradient to an A* path (after MergeCollinear).
+    /// v4.8.2 / v4.8.3 rules:
+    ///  • Both connector origins are fixed.
+    ///  • Horizontal connector leads (first / last segment) stay flat and parallel to the connector axis.
+    ///    Vertical leads may change length (they stay parallel to the connector axis).
+    ///  • Lead points absorbed by MergeCollinear are re-inserted first, so a lead stays flat while the
+    ///    run beyond it takes the gradient.
+    ///  • Interior horizontal runs take the gradient; the fall is absorbed by adjacent vertical segments.
+    ///  • A run ending at a fixed horizontal target lead is anchored at its end (upstream rises);
+    ///    otherwise it is anchored at its start (downstream falls).
+    ///  • A run next to an upward riser (flow direction) is kept flat: sloping it needs a > 90° elbow.
+    ///  • A run fixed at both ends (horizontal leads, no vertical segment) cannot absorb the fall.
+    ///  • Forced connector leads are excluded from the "rises in the flow direction" check.
     /// </summary>
     public static class SlopeApplier
     {
         private const double Tol = 1e-6;
+        private const double OnSegmentTol = 1e-5;
 
         public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems)
-            => Apply(input, s, problems, null, false);
+            => Apply(input, s, problems, null, null, false, out _);
 
-        /// <summary>
-        /// v4.8 (Task 4) – targetDirection excludes the fixed end lead when the target connector faces
-        /// downward into the target; strictGravity turns "rises in flow direction" into an Error.
-        /// </summary>
+        /// <summary>Kept for compatibility. targetDirection is no longer needed (leads are always excluded).</summary>
         public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems,
                                       XYZ targetDirection, bool strictGravity)
-            => Apply(input, s, problems, targetDirection, strictGravity, out _);
+            => Apply(input, s, problems, null, null, strictGravity, out _);
 
-        /// <summary>
-        /// v4.8.1 (Task 1) – additionally reports the actually applied fall (ft) and raises an
-        /// Error (gravity) / Warning (non-gravity) when the route cannot absorb the required fall.
-        /// </summary>
+        /// <summary>Kept for compatibility. targetDirection is no longer needed (leads are always excluded).</summary>
         public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems,
                                       XYZ targetDirection, bool strictGravity, out double appliedFallFt)
+            => Apply(input, s, problems, null, null, strictGravity, out appliedFallFt);
+
+        /// <summary>
+        /// v4.8.3 – main entry. sourceLead / targetLead are the lead points of the two connectors
+        /// (ConnectorEndpoint.Lead); they may be null. appliedFallFt = sum(sloped run length) × gradient.
+        /// </summary>
+        public static List<XYZ> Apply(IList<XYZ> input, SlopeSettings s, List<RouteProblem> problems,
+                                      XYZ sourceLead, XYZ targetLead, bool strictGravity, out double appliedFallFt)
         {
-            var pts = PathUtils.RemoveDuplicates(input);
             appliedFallFt = 0;
+            List<XYZ> pts = PathUtils.RemoveDuplicates(input).ToList();
             if (s == null || !s.Enabled || s.Gradient <= 0 || pts.Count < 2) return pts;
+
+            // v4.8.3 – re-insert lead points that MergeCollinear absorbed into the first / last segment
+            InsertOnSegment(pts, 0, sourceLead);
+            InsertOnSegment(pts, pts.Count - 2, targetLead);
 
             bool reversed = s.Flow == FlowDirection.TargetToSource;
             if (reversed) pts.Reverse();
 
-            int n = pts.Count;
+            int n = pts.Count, segCount = n - 1;
             double g = s.Gradient;
             double minV = Geom.MmToFt(s.MinVerticalMm);
+            double elbowDeg = 90.0 + Math.Atan(g) * 180.0 / Math.PI;
             double[] z = pts.Select(p => p.Z).ToArray();
 
             bool IsHoriz(int i) => Math.Abs(pts[i + 1].Z - pts[i].Z) < Tol;
+            bool IsUp(int i) => i >= 0 && i < segCount && pts[i + 1].Z - pts[i].Z > Tol;
+            bool IsLead(int i) => i == 0 || i == segCount - 1;
+            bool Slopeable(int i) => !IsLead(i) && IsHoriz(i);
             double HLen(int i) => Geom.DistanceXY(pts[i], pts[i + 1]);
-            int Label(int segIndex) => reversed ? (n - 2 - segIndex) : segIndex;
+            int Label(int seg) => reversed ? (segCount - 1 - seg) : seg;
 
-            int k = 0, segCount = n - 1;
+            double slopedRunFt = 0;
+            int k = 0;
             while (k < segCount)
             {
-                if (!IsHoriz(k)) { k++; continue; }
+                if (!Slopeable(k)) { k++; continue; }
                 int a = k;
-                while (k < segCount && IsHoriz(k)) k++;
-                int b = k;
+                while (k < segCount && Slopeable(k)) k++;
+                int b = k;                                   // run = points a..b, segments a..b-1
 
-                // v4.8 (Task 1) – the connector leads (origin → lead, lead → origin) stay parallel to
-                //                 the connector axis; only interior horizontal runs take the gradient.
-                bool touchesStart = a == 0, touchesEnd = b == n - 1;
-                bool aFixed = touchesStart, bFixed = touchesEnd;
-                if (touchesStart && touchesEnd)
+                double runFt = 0;
+                for (int i = a; i < b; i++) runFt += HLen(i);
+
+                bool startFixed = a == 1 && IsHoriz(0);                         // flat source lead before the run
+                bool endFixed = b == segCount - 1 && IsHoriz(segCount - 1);   // flat target lead after the run
+
+                // v4.8.1 / v4.8.3 – fixed at both ends: no vertical segment can absorb the fall (R-13)
+                if (startFixed && endFixed)
                 {
-                    // Whole path is a single horizontal run: both ends fixed -> total fall = 0, no error.
+                    string fallMm = Geom.FtToMm(runFt * g).ToString("0");
+                    if (strictGravity)
+                        problems.Add(RouteProblem.Error(
+                            $"Slope cannot be applied: no vertical segment to absorb {fallMm} mm fall."));
+                    else
+                        problems.Add(RouteProblem.Warn(
+                            $"Slope {SlopeLabel(s)} was not applied – route is flat (no vertical segment)."));
                     continue;
                 }
 
-                if (bFixed)
+                // v4.8.3 (Task 5) – sloping next to an upward riser always gives 90° + atan(g) > 90°
+                if (IsUp(a - 1) || IsUp(b))
                 {
-                    double rise = 0;
-                    for (int i = b - 1; i >= a; i--)
-                    {
-                        rise += HLen(i);
-                        double target = pts[b].Z + rise * g;
-                        if (aFixed && i == a) continue;   // do not tilt the source lead
-                        z[i] = target;
-                    }
+                    string where = IsUp(a - 1) ? "after" : "before";
+                    if (strictGravity)
+                        problems.Add(RouteProblem.Error(
+                            $"Run {Label(a)} is {where} an upward riser – sloping it needs a {elbowDeg:0.00}° elbow; " +
+                            "gravity drainage cannot be routed this way.", Label(a)));
+                    else
+                        problems.Add(RouteProblem.Warn(
+                            $"Run {Label(a)} {where} an upward riser was kept flat to avoid a {elbowDeg:0.00}° elbow.",
+                            Label(a)));
+                    continue;
                 }
-                else if (aFixed)
+
+                if (endFixed)
                 {
-                    double drop = 0;
-                    for (int i = a + 1; i <= b; i++)
-                    {
-                        drop += HLen(i - 1);
-                        z[i] = pts[a].Z - drop * g;
-                    }
+                    // anchored at the target lead: upstream rises, the vertical before the run absorbs it
+                    for (int i = b - 1; i >= a; i--) z[i] = z[i + 1] + HLen(i) * g;
                 }
                 else
                 {
-                    double drop = 0;
-                    for (int i = a + 1; i <= b; i++)
-                    {
-                        drop += HLen(i - 1);
-                        z[i] = z[a] - drop * g;
-                    }
+                    // anchored at the run start: downstream falls, the vertical after the run absorbs it
+                    for (int i = a + 1; i <= b; i++) z[i] = z[i - 1] - HLen(i - 1) * g;
                 }
+                slopedRunFt += runFt;
             }
 
             for (int i = 0; i < segCount; i++)
@@ -105,18 +130,17 @@ namespace MEPAutoRouting
                 if (IsHoriz(i)) continue;
                 double oldDz = pts[i + 1].Z - pts[i].Z;
                 double newDz = z[i + 1] - z[i];
-                if (Math.Sign(oldDz) != Math.Sign(newDz) || Math.Abs(newDz) < minV)
+                bool changed = Math.Abs(newDz - oldDz) > Tol;
+
+                if (Math.Sign(oldDz) != Math.Sign(newDz) || (changed && Math.Abs(newDz) < minV))
+                {
                     problems.Add(RouteProblem.Error(
                         $"Vertical segment {Label(i)} is only {Geom.FtToMm(Math.Abs(newDz)):0} mm after slope (min {s.MinVerticalMm:0} mm). " +
                         "Raise the source, lower the run or reduce the slope.", Label(i)));
-                else if (newDz > 0)
+                }
+                else if (newDz > 0 && !IsLead(i))
                 {
-                    // v4.8 (Task 4) – exclude the fixed end lead when the target connector faces downward
-                    int origIndex = reversed ? (segCount - 1 - i) : i;
-                    bool isEndLead = origIndex == segCount - 1;
-                    bool targetFacesDown = targetDirection != null && targetDirection.Z < -0.5;
-                    if (isEndLead && targetFacesDown) continue;
-
+                    // v4.8.2 (Task 2) – forced connector leads are not checked; only interior risers
                     string riseMsg = $"Segment {Label(i)} rises {Geom.FtToMm(newDz):0} mm in the flow direction";
                     if (strictGravity)
                         problems.Add(RouteProblem.Error(riseMsg + " – gravity drainage cannot flow uphill.", Label(i)));
@@ -125,32 +149,54 @@ namespace MEPAutoRouting
                 }
             }
 
-            var result = pts.Select((p, i) => new XYZ(p.X, p.Y, z[i])).ToList();
+            List<XYZ> result = pts.Select((p, i) => new XYZ(p.X, p.Y, z[i])).ToList();
             if (reversed) result.Reverse();
 
-            // v4.8.1 (Task 1) – report the actually applied fall and fail/warn when the route cannot absorb it
-            appliedFallFt = result.Count < 2 ? 0 : Math.Abs(result[0].Z - result[result.Count - 1].Z);
-            double interiorRunFt = 0;
-            for (int i = 1; i < result.Count - 2; i++)   // interior segments only (leads excluded)
-                if (Math.Abs(result[i + 1].Z - result[i].Z) < Tol)
-                    interiorRunFt += Geom.DistanceXY(result[i], result[i + 1]);
-            double requiredFall = interiorRunFt * g;
-
-            if (requiredFall > Geom.MmToFt(1) && appliedFallFt < requiredFall - Geom.MmToFt(1))
-            {
-                string fallMm = Geom.FtToMm(requiredFall).ToString("0");
-                if (strictGravity)
-                    problems.Add(RouteProblem.Error(
-                        $"Slope cannot be applied: no vertical segment to absorb {fallMm} mm fall."));
-                else
-                    problems.Add(RouteProblem.Warn(
-                        $"Slope {s.Display.Split(' ')[0]} was not applied – route is flat (no vertical segment)."));
-            }
-
-            return result;
+            appliedFallFt = slopedRunFt * g;
+            return MergeExactCollinear(result);
         }
 
         public static double TotalFall(IList<XYZ> sloped) =>
             sloped == null || sloped.Count < 2 ? 0 : Math.Abs(sloped[0].Z - sloped[^1].Z);
+
+        // ------------------------------------------------------------------ helpers
+
+        private static string SlopeLabel(SlopeSettings s)
+        {
+            string d = s.Display ?? "";
+            int sp = d.IndexOf(' ');
+            return sp > 0 ? d.Substring(0, sp) : d;
+        }
+
+        /// <summary>Insert p into segment seg if it lies strictly inside that segment.</summary>
+        private static void InsertOnSegment(List<XYZ> pts, int seg, XYZ p)
+        {
+            if (p == null || seg < 0 || seg >= pts.Count - 1) return;
+            XYZ a = pts[seg], b = pts[seg + 1];
+            if (p.DistanceTo(a) < OnSegmentTol * 10 || p.DistanceTo(b) < OnSegmentTol * 10) return;
+            if (Math.Abs(a.DistanceTo(p) + p.DistanceTo(b) - a.DistanceTo(b)) > OnSegmentTol) return;
+            pts.Insert(seg + 1, p);
+        }
+
+        /// <summary>
+        /// Remove only EXACTLY collinear middle points. A flat lead followed by a 1:40 run differs by ~1.4°
+        /// and must not be merged into one skewed segment, so a loose collinear tolerance is not used here.
+        /// </summary>
+        private static List<XYZ> MergeExactCollinear(List<XYZ> pts)
+        {
+            if (pts.Count < 3) return pts;
+            var outList = new List<XYZ> { pts[0] };
+            for (int i = 1; i < pts.Count - 1; i++)
+            {
+                XYZ v1 = pts[i] - outList[^1];
+                XYZ v2 = pts[i + 1] - pts[i];
+                if (v1.GetLength() < Tol) continue;
+                if (v2.GetLength() < Tol) { outList.Add(pts[i]); continue; }
+                if ((v1.Normalize() - v2.Normalize()).GetLength() < 1e-9) continue;
+                outList.Add(pts[i]);
+            }
+            outList.Add(pts[^1]);
+            return outList;
+        }
     }
 }

@@ -30,6 +30,10 @@ namespace MEPAutoRouting.Routing
 
     public static class RouteService
     {
+        private const double MaxElbowDeg = 90.05;          // v4.8.3 – standard elbows cannot exceed 90°
+        private const double StraightJoinDeg = 0.5;        // same threshold RouteBuilder uses to skip elbows
+        private const double LeadParallelDeg = 0.01;       // v4.8.2 – lead must be parallel to connector axis
+
         public static RouteResult Run(UIDocument uidoc, RouteRequest request, Action<string> log)
         {
             var result = new RouteResult();
@@ -78,20 +82,17 @@ namespace MEPAutoRouting.Routing
             ConnectorEndpoint target = ConnectorEndpoint.From(targetConnector, lead);
             log?.Invoke($"Start: source {Geom.FtToMm(source.Radius * 2):0} mm, target {Geom.FtToMm(target.Radius * 2):0} mm, lead {options.LeadLengthMm:0} mm.");
 
+            // v4.8.3 (Task 6) – ONE effective size: used for clearance, segment creation, OUTPUT and warnings
+            bool fixedSize = ResolveSize(doc, request, source, log, out PipeSizeInfo routeSize);
+            double routeMm = routeSize.NominalMm;
+
             // v4.4 – absorb small connector offsets into the leads
-            double radius = request.Size?.OuterRadiusFt ?? Math.Max(source.Radius, target.Radius);
+            double radius = fixedSize ? routeSize.OuterRadiusFt : Math.Max(source.Radius, target.Radius);
             double minJog = Math.Max(Geom.MmToFt(100), radius * 6);
             double minLead = Math.Max(Geom.MmToFt(75), radius * 4);
             AlignLeads(ref source, ref target, minJog, minLead, result.Problems, log);
 
-            // v4.8.1 (Task 2/3) – effective route diameter: matched to source when no explicit size is given
-            double routeMm = request.Size?.NominalMm ?? Geom.FtToMm(source.Radius * 2);
-            if (request.Size == null)
-                log?.Invoke($"Pipe size: {routeMm:0.#} mm (matched source Ø{Geom.FtToMm(source.Radius * 2):0.#}, snapped to type catalog)");
-            else
-                log?.Invoke($"Pipe size: {routeMm:0.#} mm.");
-
-            // v4.8 (Task 5) / v4.8.1 (Task 3) – warn for ANY size mismatch (matched or explicit); no reducer is created
+            // v4.8 (Task 5) / v4.8.1 (Task 3) – warn for ANY size mismatch; no reducer is created
             void CheckSize(ConnectorEndpoint ep, string label)
             {
                 if (ep.Radius > 0)
@@ -106,7 +107,6 @@ namespace MEPAutoRouting.Routing
             CheckSize(target, "target");
 
             // v4.6 – configurable margin around the route region (default 2000 mm).
-            //        Walls are collected over region + margin so walls enclosing the room are included.
             double regionMargin = Geom.MmToFt(options.RegionMarginMm > 0 ? options.RegionMarginMm : 2000);
 
             XYZ regionMin;
@@ -130,10 +130,9 @@ namespace MEPAutoRouting.Routing
 
             double clearance = Geom.MmToFt(options.WallClearanceMm);
 
-            // v4.5/v4.6 – keep the route between the reference level and the level above;
-            //             zLimitMin = level + pipe OD/2 + clearance, never below the level.
+            // v4.5/v4.6 – keep the route between the reference level and the level above
             ClampVertical(doc, request.LevelId, source, target, radius, clearance, ref regionMin, ref regionMax, log);
-            double zLimitMin = regionMin.Z, zLimitMax = regionMax.Z;   // hard limits – region expansion never crosses these
+            double zLimitMin = regionMin.Z, zLimitMax = regionMax.Z;
 
             log?.Invoke($"Region: {Geom.FtToMm(regionMax.X - regionMin.X):0} x {Geom.FtToMm(regionMax.Y - regionMin.Y):0} x {Geom.FtToMm(regionMax.Z - regionMin.Z):0} mm.");
 
@@ -171,7 +170,7 @@ namespace MEPAutoRouting.Routing
                 constraints.AddExemptCorridor(target, Geom.MmToFt(150));
 
                 finder = new AStarPathfinder(doc, CreateBounds(regionMin, regionMax), constraints);
-                finder.SetVerticalLimits(zLimitMin, zLimitMax);   // v4.6 – BFS + A* block nodes outside the level band
+                finder.SetVerticalLimits(zLimitMin, zLimitMax);
                 log?.Invoke("Running A* pathfinder.");
                 middle = finder.FindPath(source.Lead, target.Lead, source.Direction, source, target);
                 log?.Invoke($"A* finished: {middle.Count} points, grid {finder.GridInfo}, blocked nodes {finder.BlockedNodeCount} / {finder.TotalNodeCount}.");
@@ -181,7 +180,6 @@ namespace MEPAutoRouting.Routing
 
             if (!PathUtils.IsValid(middle))
             {
-                // v4.6 – no modal dialog: the failure is returned as a RouteProblem (PROBLEMS + status bar)
                 result.Problems.Add(RouteProblem.Error(
                     finder?.LastFailure?.Message ?? "No path found – source/target enclosed by walls."));
                 return result;
@@ -198,7 +196,7 @@ namespace MEPAutoRouting.Routing
 
             if (options.Slope != null && options.Slope.Enabled)
             {
-                // v4.8 (Task 4) – gravity systems: uphill verticals are Errors; pressurised systems: Warn.
+                // v4.8 (Task 4) – gravity systems: uphill / unslopeable runs are Errors; pressurised systems: Warn.
                 bool strictGravity = false;
                 if (doc.GetElement(request.SystemTypeId) is Autodesk.Revit.DB.Plumbing.PipingSystemType pst)
                 {
@@ -206,14 +204,20 @@ namespace MEPAutoRouting.Routing
                     if (isPressurised)
                         result.Problems.Add(RouteProblem.Warn(
                             $"Slope is applied to a pressurised system ({pst.Name})."));
+                            log?.Invoke(SlopeSettings.Describe(pst));
                 }
 
+                // v4.8.2 / v4.8.3 – leads stay flat, forced leads excluded from uphill, no > 90° slope turns
                 result.Path = SlopeApplier.Apply(result.Path, options.Slope, result.Problems,
-                    target.Connector?.CoordinateSystem?.BasisZ, strictGravity, out double appliedFallFt);
-                result.AppliedFallFt = appliedFallFt;   // v4.8.1 (Task 1) – summary shows the applied fall
+                    source.Lead, target.Lead, strictGravity, out double appliedFallFt);
+                result.AppliedFallFt = appliedFallFt;
+                log?.Invoke($"Slope applied: total fall {Geom.FtToMm(appliedFallFt):0} mm.");
                 ValidateSlopedPath(result.Path, constraints, finder, source, target, zLimitMin, zLimitMax,
                     Geom.MmToFt(request.MinSegmentMm > 0 ? request.MinSegmentMm : 0), result.Problems, log);
             }
+
+            // v4.8.3 (Task 4) – elbow angle gate BEFORE the transaction (also shown in Preview)
+            if (request.AddFittings) CheckTurnAngles(result.Path, result.Problems, log);
 
             log?.Invoke($"Path ready: {result.Path.Count} points, slope {options.Slope?.Display ?? "None"}.");
 
@@ -231,7 +235,7 @@ namespace MEPAutoRouting.Routing
                 return result;
             }
 
-            log?.Invoke($"Creating {result.Path.Count - 1} segments.");
+            log?.Invoke($"Creating {result.Path.Count - 1} segments at {routeMm:0.#} mm.");
             using (var transaction = new Transaction(doc, "MEP Auto Route"))
             {
                 transaction.Start();
@@ -244,8 +248,8 @@ namespace MEPAutoRouting.Routing
                         TypeId = request.PipeTypeId,
                         SystemTypeId = request.SystemTypeId,
                         LevelId = request.LevelId,
-                        MatchSize = request.Size == null,
-                        Size = request.Size,
+                        MatchSize = !fixedSize,                       // v4.8.3 – created size == logged size
+                        Size = fixedSize ? routeSize : (PipeSizeInfo?)null,
                         AddFittings = request.AddFittings,
                         ConnectEnds = request.ConnectEnds
                     };
@@ -259,7 +263,7 @@ namespace MEPAutoRouting.Routing
                     result.Created.AddRange(built.Created);
                     log?.Invoke($"Elbows: {built.Fittings} created, {built.FittingFailures} failed.");
 
-                    // v4.8 (ISS-026) – any elbow failure rolls the whole route back; nothing stays in the model
+                    // v4.8 (ISS-026) – any elbow failure rolls the whole route back
                     if (built.FittingFailures > 0)
                     {
                         transaction.RollBack();
@@ -303,12 +307,84 @@ namespace MEPAutoRouting.Routing
             return result;
         }
 
+        // ------------------------------------------------------------------ v4.8.3 size resolution
+
+        /// <summary>
+        /// Returns true when the size is fixed (user input or snapped to the type catalog) and must be
+        /// applied to the created segments; false when RouteBuilder should match the connector size.
+        /// </summary>
+        private static bool ResolveSize(Document doc, RouteRequest request, ConnectorEndpoint source,
+                                        Action<string> log, out PipeSizeInfo size)
+        {
+            if (request.Size.HasValue)
+            {
+                size = request.Size.Value;
+                log?.Invoke($"Pipe size: {size.NominalMm:0.#} mm (user input).");
+                return true;
+            }
+
+            double srcMm = Geom.FtToMm(source.Radius * 2);
+            List<PipeSizeInfo> sizes;
+            switch (request.Discipline)
+            {
+                case Discipline.Pipe:
+                    sizes = PipeSizeCatalog.GetPipeSizes(doc, request.PipeTypeId, log);
+                    break;
+                case Discipline.Conduit:
+                    sizes = PipeSizeCatalog.GetConduitSizes(doc, request.PipeTypeId);
+                    break;
+                default:
+                    sizes = new List<PipeSizeInfo>();
+                    break;
+            }
+
+            if (sizes.Count == 0)
+            {
+                size = new PipeSizeInfo(srcMm, srcMm);
+                log?.Invoke($"Pipe size: {srcMm:0.#} mm (matched source Ø{srcMm:0.#}; no size list for this type – connector size used).");
+                return false;
+            }
+
+            size = PipeSizeCatalog.Snap(srcMm, sizes, out bool exact);
+            log?.Invoke($"Pipe size: {size.NominalMm:0.#} mm (matched source Ø{srcMm:0.#}" +
+                        $"{(exact ? "" : ", snapped to type catalog")}).");
+            return true;
+        }
+
+        // ------------------------------------------------------------------ v4.8.3 elbow angle gate
+
+        private static void CheckTurnAngles(IList<XYZ> path, List<RouteProblem> problems, Action<string> log)
+        {
+            if (path == null || path.Count < 3) return;
+            double max = 0;
+            int turns = 0, bad = 0;
+            for (int i = 1; i < path.Count - 1; i++)
+            {
+                XYZ v1 = path[i] - path[i - 1];
+                XYZ v2 = path[i + 1] - path[i];
+                if (v1.GetLength() < 1e-6 || v2.GetLength() < 1e-6) continue;
+                double dot = Math.Max(-1.0, Math.Min(1.0, v1.Normalize().DotProduct(v2.Normalize())));
+                double deg = Math.Acos(dot) * 180.0 / Math.PI;
+                if (deg < StraightJoinDeg) continue;
+                turns++;
+                max = Math.Max(max, deg);
+                if (deg > MaxElbowDeg)
+                {
+                    bad++;
+                    XYZ p = path[i];
+                    problems.Add(RouteProblem.Error(
+                        $"Turn {i} is {deg:0.00}° at ({Geom.FtToMm(p.X):0}, {Geom.FtToMm(p.Y):0}, {Geom.FtToMm(p.Z):0}) – " +
+                        "standard elbows cannot exceed 90°.", i));
+                }
+            }
+            log?.Invoke($"Turn precheck: {turns} turn(s), max {max:0.00}°{(bad > 0 ? $", {bad} over 90°" : "")}.");
+        }
+
         // ------------------------------------------------------------------ v4.7 post-slope validation
 
         /// <summary>
-        /// v4.7 (ISS-004) – re-validate the path AFTER the slope is applied: axis-alignment with slope
-        /// allowed, wall / boundary re-sampling, the vertical band and the pathfinder's obstacle boxes.
-        /// Any failure is an Error and therefore blocks commit – nothing is created.
+        /// v4.7 (ISS-004) – re-validate the path AFTER the slope is applied.
+        /// v4.8.2 – also checks that both connector leads are parallel to their connector axis.
         /// </summary>
         private static void ValidateSlopedPath(List<XYZ> path, RoutingConstraints constraints, AStarPathfinder finder,
                                                ConnectorEndpoint source, ConnectorEndpoint target,
@@ -320,6 +396,16 @@ namespace MEPAutoRouting.Routing
             // (a) geometry + wall / boundary re-sampling, slope-aware
             problems.AddRange(PathValidator.Validate(path, minSegmentFt, constraints.IsBlocked,
                 Geom.MmToFt(50) / 2.0, allowSlope: true));
+
+            // (a2) v4.8.2 (Task 1) – connector leads parallel to the connector axis
+            if (path.Count >= 2)
+            {
+                bool srcOk = IsParallel(path[1] - path[0], source.Direction);
+                bool tgtOk = IsParallel(path[^1] - path[^2], target.Direction);
+                if (!srcOk) problems.Add(RouteProblem.Error("Connector lead source is not aligned.", 0));
+                if (!tgtOk) problems.Add(RouteProblem.Error("Connector lead target is not aligned.", path.Count - 2));
+                log?.Invoke($"Leads fixed: source {(srcOk ? "OK" : "FAILED")}, target {(tgtOk ? "OK" : "FAILED")}.");
+            }
 
             double zTol = Geom.MmToFt(1);
             string limits = $"limit {Geom.FtToMm(zLimitMin):0}-{Geom.FtToMm(zLimitMax):0} mm";
@@ -359,12 +445,15 @@ namespace MEPAutoRouting.Routing
             log?.Invoke(errors == 0 ? "Post-slope validation: OK" : $"Post-slope validation: {errors} error(s).");
         }
 
+        private static bool IsParallel(XYZ v, XYZ axis)
+        {
+            if (v == null || axis == null || v.GetLength() < 1e-9 || axis.GetLength() < 1e-9) return true;
+            double dot = Math.Abs(v.Normalize().DotProduct(axis.Normalize()));
+            return dot >= Math.Cos(LeadParallelDeg * Math.PI / 180.0);
+        }
+
         // ------------------------------------------------------------------ v4.5 vertical limits
 
-        /// <summary>
-        /// Z range = [reference level + pipe radius, level above − pipe radius].
-        /// The connectors themselves are always kept inside the range.
-        /// </summary>
         private static void ClampVertical(Document doc, ElementId levelId, ConnectorEndpoint s, ConnectorEndpoint t,
                                           double radius, double clearanceFt, ref XYZ min, ref XYZ max, Action<string> log)
         {
@@ -385,9 +474,8 @@ namespace MEPAutoRouting.Routing
             double lowEnd = Math.Min(Math.Min(s.Origin.Z, s.Lead.Z), Math.Min(t.Origin.Z, t.Lead.Z));
             double highEnd = Math.Max(Math.Max(s.Origin.Z, s.Lead.Z), Math.Max(t.Origin.Z, t.Lead.Z));
 
-            // v4.6 – zLimitMin = reference level + pipe OD/2 + clearance, never below the reference level.
             double zMin = levelZ + radius + clearanceFt;
-            if (lowEnd > levelZ) zMin = Math.Min(zMin, lowEnd);   // keep above-level connectors inside the band
+            if (lowEnd > levelZ) zMin = Math.Min(zMin, lowEnd);
             zMin = Math.Max(zMin, levelZ);
 
             double zMax = nextZ.HasValue ? Math.Min(max.Z, Math.Max(nextZ.Value - radius, highEnd)) : max.Z;

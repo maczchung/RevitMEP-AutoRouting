@@ -10,7 +10,7 @@ namespace MEPAutoRouting
     public sealed class SlopeSettings
     {
         public bool Enabled { get; set; } = false;
-        public double Value { get; set; } = 40;               // 1:40 預設，請按項目規範
+        public double Value { get; set; } = 40;               // default 1:40 – follow project standard
         public SlopeUnit Unit { get; set; } = SlopeUnit.Ratio;
         public FlowDirection Flow { get; set; } = FlowDirection.SourceToTarget;
         public double MinVerticalMm { get; set; } = 50;
@@ -33,27 +33,66 @@ namespace MEPAutoRouting
             return true;
         }
 
-        public static bool IsGravitySystem(PipingSystemType st)
+        // ------------------------------------------------------------------ v4.8.4 system classification
+
+        private static readonly string[] PressurisedWords =
+            { "boosted", "pumped", "pressur", "rising main", "pump", "domestic", "cold water", "hot water", "fire" };
+
+        private static readonly string[] GravityWords =
+            { "storm", "rain", "drain", "waste", "soil", "condensate", "sanitary", "foul" };
+
+        private static bool NameHas(string name, string[] words)
         {
-            if (st == null) return false;
-            if (st.SystemClassification == MEPSystemClassification.Sanitary) return true;
-            string n = (st.Name ?? "").ToLowerInvariant();
-            return n.Contains("storm") || n.Contains("rain") || n.Contains("drain")
-                || n.Contains("waste") || n.Contains("soil") || n.Contains("condensate");
+            string n = (name ?? "").ToLowerInvariant();
+            foreach (string w in words) if (n.Contains(w)) return true;
+            return false;
         }
 
+        private static bool IsPressurisedClassification(MEPSystemClassification c) =>
+            c == MEPSystemClassification.DomesticColdWater ||
+            c == MEPSystemClassification.DomesticHotWater ||
+            c == MEPSystemClassification.SupplyHydronic ||
+            c == MEPSystemClassification.ReturnHydronic ||
+            c == MEPSystemClassification.FireProtectWet ||
+            c == MEPSystemClassification.FireProtectDry ||
+            c == MEPSystemClassification.FireProtectPreaction ||
+            c == MEPSystemClassification.FireProtectOther;
+
         /// <summary>
-        /// v4.8 (Task 4) – true for sanitary / storm / drain / waste / soil / condensate systems.
-        /// isPressurised is set for common boosted / domestic water systems so the UI can warn
-        /// when a slope is applied to a pressurised system.
+        /// v4.8.4 – order of precedence:
+        ///  1. Name contains a pressurised word (Boosted, Pumped, Pressur…, Rising main, Pump…) → NOT gravity.
+        ///     e.g. "Boosted Rainwater Harvesting" is pumped, not gravity drainage.
+        ///  2. SystemClassification = Sanitary → gravity.
+        ///  3. Pressurised classification (domestic water, hydronic, fire) → NOT gravity.
+        ///  4. Name fallback (OtherPipe etc.): storm / rain / drain / waste / soil / condensate / sanitary / foul.
         /// </summary>
+        public static bool IsGravitySystem(PipingSystemType st)
+            => Classify(st) == SystemKind.Gravity;
+
         public static bool IsGravitySystem(PipingSystemType st, out bool isPressurised)
         {
-            bool gravity = IsGravitySystem(st);
-            string n = (st?.Name ?? "").ToLowerInvariant();
-            isPressurised = !gravity && (n.Contains("boosted") || n.Contains("domestic")
-                || n.Contains("cold water") || n.Contains("hot water") || n.Contains("pressur"));
-            return gravity;
+            SystemKind k = Classify(st);
+            isPressurised = k == SystemKind.Pressurised;
+            return k == SystemKind.Gravity;
+        }
+
+        public enum SystemKind { Unknown, Gravity, Pressurised }
+
+        public static SystemKind Classify(PipingSystemType st)
+        {
+            if (st == null) return SystemKind.Unknown;
+            if (NameHas(st.Name, PressurisedWords)) return SystemKind.Pressurised;
+            if (st.SystemClassification == MEPSystemClassification.Sanitary) return SystemKind.Gravity;
+            if (IsPressurisedClassification(st.SystemClassification)) return SystemKind.Pressurised;
+            if (NameHas(st.Name, GravityWords)) return SystemKind.Gravity;
+            return SystemKind.Unknown;
+        }
+
+        /// <summary>v4.8.4 – "System: {name} – classification {cls} – {gravity|pressurised|unknown}".</summary>
+        public static string Describe(PipingSystemType st)
+        {
+            if (st == null) return "System: none";
+            return $"System: {st.Name} – classification {st.SystemClassification} – {Classify(st).ToString().ToLowerInvariant()}";
         }
     }
 }
