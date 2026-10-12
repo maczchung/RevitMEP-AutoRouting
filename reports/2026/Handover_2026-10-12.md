@@ -3,13 +3,13 @@
 | Item | Value |
 |---|---|
 | Date | 2026-10-12 |
-| Generated | 2026-10-12 08:15 HKT |
+| Generated | 2026-10-12 10:58 HKT |
 | Version | 4.8.3 |
 | Branch | `main` |
 | Latest tag | (no tag) |
-| Latest commit | 58e9604 | handover-bot | 2026-10-11 00:08 | [handover] Daily report 2026-10-11 [skip ci] |
-| Build | ❌ FAIL (Errors: - / Warnings: -) |
-| Activity (last 24 h) | 0 commits, 0 files, +0 / -0 lines |
+| Latest commit | 5411f78 | Matthew | 2026-10-12 10:54 | Add handover setup guide |
+| Build | ❌ FAIL (Errors: 429 / Warnings: 0) |
+| Activity (last 24 h) | 3 commits, 2 files, +139 / -1 lines |
 
 ## 1. Status
 In Development - v4.8.3 build stable (0 errors / 0 warnings)
@@ -22,25 +22,43 @@ In Development - v4.8.3 build stable (0 errors / 0 warnings)
 - Publisher: Cundall HK / Matthew Kwok
 
 ## 3. Commits (last 24 h)
-_No new commits._
+| Hash | Author | Time | Message |
+|---|---|---|---|
+| `5411f78` | Matthew | 10-12 10:54 | Add handover setup guide |
+| `282d190` | Matthew | 10-12 10:53 | Fix build path: use MEPAutoRouting.csproj |
+| `8f4cd2c` | Matthew | 10-12 10:52 | Merge branch 'main' of https://github.com/maczchung/RevitMEP-AutoRouting |
 
 ## 4. Files Changed
-**Added (0)**
-- none
+**Added (1)**
+- `docs/HANDOVER_SETUP_GUIDE.md`
 
-**Modified (0)**
-- none
+**Modified (1)**
+- `.github/workflows/daily-handover.yml`
 
 **Deleted (0)**
 - none
 
 ## 5. Build Result
 - Result: ❌ FAIL
-- Errors: -
-- Warnings: -
+- Errors: 429
+- Warnings: 0
 
 ```text
-MSBUILD : error MSB1009: Project file does not exist.
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Core\App.cs(4,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Core\AStarPathfinder.cs(3,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Core\AutoRoutingCommand.cs(3,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Core\AutoRoutingCommand.cs(4,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Core\AutoRoutingCommand.cs(5,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Core\GeometryExtractor.cs(3,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Core\RoutingVolumeUtils.cs(1,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Electrical\ConduitSegmentFactory.cs(1,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Electrical\ConduitSegmentFactory.cs(2,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Mechanical\DuctSegmentFactory.cs(1,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Mechanical\DuctSegmentFactory.cs(2,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Plumbing\PipeSegmentFactory.cs(1,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Plumbing\PipeSegmentFactory.cs(2,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Routing\ISegmentFactory.cs(1,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
+D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\Routing\RouteBuilder.cs(3,7): error CS0246: The type or namespace name 'Autodesk' could not be found (are you missing a using directive or an assembly reference?) [D:\a\RevitMEP-AutoRouting\RevitMEP-AutoRouting\MEPAutoRouting_wccs3pzx_wpftmp.csproj]
 ```
 
 ## 6. Work Done Today (manual)
@@ -94,8 +112,8 @@ Continue development of MEP Auto Routing (Revit add-in).
 Assume previous chat history is lost. Use this handover as the source of truth.
 
 Current version: 4.8.3
-Branch: main | Latest commit: 58e9604 | handover-bot | 2026-10-11 00:08 | [handover] Daily report 2026-10-11 [skip ci]
-Build status: failure (Errors: -, Warnings: -)
+Branch: main | Latest commit: 5411f78 | Matthew | 2026-10-12 10:54 | Add handover setup guide
+Build status: failure (Errors: 429, Warnings: 0)
 
 Environment:
 - Revit 2025 (API: .NET 8, net8.0-windows)
@@ -117,7 +135,9 @@ Known issues:
 - (例如：Wall avoidance fails when wall is curved)
 
 Recent commits:
-- none in last period
+- Add handover setup guide
+- Fix build path: use MEPAutoRouting.csproj
+- Merge branch 'main' of https://github.com/maczchung/RevitMEP-AutoRouting
 
 Next priority:
 1. Wall avoidance enhancement
