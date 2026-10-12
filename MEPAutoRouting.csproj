@@ -21,13 +21,16 @@
     <Version>1.6.4</Version>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
     <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2025</RevitAddinsDir>
+    <!-- true on a PC with Revit 2025 installed; false on GitHub Actions -->
+    <HasLocalRevit Condition="Exists('$(RevitInstallDir)\RevitAPI.dll')">true</HasLocalRevit>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <Optimize>true</Optimize>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!-- ===== Revit API (local PC): use installed Revit 2025 DLLs ===== -->
+  <ItemGroup Condition="'$(HasLocalRevit)' == 'true'">
     <Reference Include="RevitAPI">
       <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
       <Private>false</Private>
@@ -36,6 +39,12 @@
       <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
       <Private>false</Private>
     </Reference>
+  </ItemGroup>
+
+  <!-- ===== Revit API (GitHub Actions / no Revit): NuGet reference assemblies ===== -->
+  <ItemGroup Condition="'$(HasLocalRevit)' != 'true'">
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2025.*" ExcludeAssets="runtime" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2025.*" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>
@@ -45,7 +54,7 @@
 
   <!-- Auto-deploy after Debug build. Close Revit first (DLL is locked while Revit runs).
        Deploys to the Addins ROOT - the manifest resolves MEPAutoRouting.dll relative to itself. -->
-  <Target Name="DeployToRevit" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
+  <Target Name="DeployToRevit" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' And '$(HasLocalRevit)' == 'true'">
     <ItemGroup>
       <DeployFiles Include="$(TargetDir)MEPAutoRouting.dll;$(TargetDir)MEPAutoRouting.pdb" />
     </ItemGroup>
@@ -54,24 +63,4 @@
     <Copy SourceFiles="MEPAutoRouting.addin" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="true" ContinueOnError="WarnAndContinue" />
     <Message Importance="high" Text="Deployed to $(RevitAddinsDir)" />
   </Target>
-   <PropertyGroup>
-    <RevitInstallDir>C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
-    <HasLocalRevit Condition="Exists('$(RevitInstallDir)\RevitAPI.dll')">true</HasLocalRevit>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(HasLocalRevit)' == 'true'">
-    <Reference Include="RevitAPI">
-      <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="RevitAPIUI">
-      <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(HasLocalRevit)' != 'true'">
-    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2025.*" ExcludeAssets="runtime" />
-    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2025.*" ExcludeAssets="runtime" />
-  </ItemGroup>
 </Project>
