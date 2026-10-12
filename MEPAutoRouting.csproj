@@ -54,4 +54,24 @@
     <Copy SourceFiles="MEPAutoRouting.addin" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="true" ContinueOnError="WarnAndContinue" />
     <Message Importance="high" Text="Deployed to $(RevitAddinsDir)" />
   </Target>
+   <PropertyGroup>
+    <RevitInstallDir>C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
+    <HasLocalRevit Condition="Exists('$(RevitInstallDir)\RevitAPI.dll')">true</HasLocalRevit>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(HasLocalRevit)' == 'true'">
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(HasLocalRevit)' != 'true'">
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2025.*" ExcludeAssets="runtime" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2025.*" ExcludeAssets="runtime" />
+  </ItemGroup>
 </Project>
