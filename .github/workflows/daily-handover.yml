@@ -30,7 +30,7 @@ concurrency:
 env:
   # ---------- EDIT THESE FOR YOUR REPO ----------
   PROJECT_NAME: 'MEP Auto Routing'
- SOLUTION_PATH: 'MEPAutoRouting.csproj'   # path to .sln or .csproj
+  SOLUTION_PATH: 'MEPAutoRouting.csproj'   # path to .sln or .csproj
   DEFAULT_BUILD_MODE: 'dotnet'             # dotnet | msbuild | skip
   DOTNET_VERSION: '8.0.x'                  # Revit 2025 add-ins = .NET 8
   REPORT_DIR: 'reports'
