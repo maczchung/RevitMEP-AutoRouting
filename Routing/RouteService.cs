@@ -92,17 +92,48 @@ namespace MEPAutoRouting.Routing
             double minLead = Math.Max(Geom.MmToFt(75), radius * 4);
             AlignLeads(ref source, ref target, minJog, minLead, result.Problems, log);
 
-            // v4.8 (Task 5) / v4.8.1 (Task 3) – warn for ANY size mismatch; no reducer is created
+            // v4.8.4 - nominal connector compatibility.
+            // In Match Source mode, the selected pipe catalog value may represent
+            // an actual/catalog diameter, for example 54 mm copper for a nominal
+            // 50 mm connector. ResolveSize() has already mapped the source
+            // connector to a valid size in the selected type catalog.
+            bool matchSourceMode = !request.Size.HasValue;
+            double sourceConnectorMm = Geom.FtToMm(source.Radius * 2);
+
             void CheckSize(ConnectorEndpoint ep, string label)
             {
-                if (ep.Radius > 0)
+                if (ep == null || ep.Radius <= 0)
+                    return;
+
+                double connectorMm = Geom.FtToMm(ep.Radius * 2);
+
+                // Match Source mode compares both endpoints with the source
+                // connector nominal diameter. Explicit-size mode compares with
+                // the user-selected route size.
+                double comparisonMm = matchSourceMode
+                    ? sourceConnectorMm
+                    : routeMm;
+
+                bool compatible = Math.Abs(connectorMm - comparisonMm) <= 0.5;
+                string displayLabel = char.ToUpperInvariant(label[0]) + label.Substring(1);
+
+                log?.Invoke(
+                    $"{displayLabel} size check: " +
+                    $"connector={connectorMm:0.#} mm nominal, " +
+                    $"route catalog={routeMm:0.#} mm, " +
+                    $"comparison nominal={comparisonMm:0.#} mm, " +
+                    $"mode={(matchSourceMode ? "match source" : "explicit size")}, " +
+                    $"compatible={compatible}.");
+
+                if (!compatible)
                 {
-                    double connMm = Geom.FtToMm(ep.Radius * 2);
-                    if (Math.Abs(connMm - routeMm) > 0.5)
-                        result.Problems.Add(RouteProblem.Warn(
-                            $"Route size {routeMm:0.#} mm differs from {label} connector Ø{connMm:0.#} mm – no reducer will be created."));
+                    result.Problems.Add(RouteProblem.Warn(
+                        $"{displayLabel} connector Ø{connectorMm:0.#} mm " +
+                        $"does not match route nominal size Ø{comparisonMm:0.#} mm - " +
+                        "a reducer is required but automatic reducer creation is not implemented."));
                 }
             }
+
             CheckSize(source, "source");
             CheckSize(target, "target");
 
