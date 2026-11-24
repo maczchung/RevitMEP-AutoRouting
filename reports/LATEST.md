@@ -2,14 +2,14 @@
 
 | Item | Value |
 |---|---|
-| Date | 2026-11-23 |
-| Generated | 2026-11-23 09:26 HKT |
+| Date | 2026-11-24 |
+| Generated | 2026-11-24 13:10 HKT |
 | Version | 4.8.3 |
 | Branch | `main` |
 | Latest tag | (no tag) |
-| Latest commit | 368c65f | handover-bot | 2026-11-22 01:00 | [handover] Daily report 2026-11-22 [skip ci] |
+| Latest commit | 3305839 | Matthew | 2026-11-24 11:12 | Merge branch 'main' of https://github.com/maczchung/RevitMEP-AutoRouting |
 | Build | ✅ PASS (Errors: 0 / Warnings: 0) |
-| Activity (last 24 h) | 0 commits, 0 files, +0 / -0 lines |
+| Activity (last 24 h) | 2 commits, 98 files, +1239 / -132 lines |
 
 ## 1. Status
 In Development - v4.8.3 build stable (0 errors / 0 warnings)
@@ -22,14 +22,113 @@ In Development - v4.8.3 build stable (0 errors / 0 warnings)
 - Publisher: Cundall HK / Matthew Kwok
 
 ## 3. Commits (last 24 h)
-_No new commits._
+| Hash | Author | Time | Message |
+|---|---|---|---|
+| `3305839` | Matthew | 11-24 11:12 | Merge branch 'main' of https://github.com/maczchung/RevitMEP-AutoRouting |
+| `184ba69` | Matthew | 11-24 11:12 | 24/11 |
 
 ## 4. Files Changed
-**Added (0)**
-- none
+**Added (70)**
+- `bin/Debug/net8.0-windows/MEPAutoRouting.deps.json`
+- `bin/Debug/net8.0-windows/MEPAutoRouting.dll`
+- `bin/Debug/net8.0-windows/MEPAutoRouting.pdb`
+- `bin/Debug/net8.0-windows/MEPAutoRouting.runtimeconfig.json`
+- `obj/Debug/net8.0-windows/GeneratedInternalTypeHelper.g.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.csproj.AssemblyReference.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.csproj.CoreCompileInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.dll`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.g.resources`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.genruntimeconfig.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.pdb`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_3pzuuozo_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_3pzuuozo_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_3pzuuozo_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_3pzuuozo_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_3pzuuozo_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_MarkupCompile.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_MarkupCompile.lref`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_fnqdfd5m_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_fnqdfd5m_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_fnqdfd5m_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_fnqdfd5m_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_fnqdfd5m_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_ioueuma2_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_ioueuma2_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_ioueuma2_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_ioueuma2_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_ioueuma2_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_k3cyqgqw_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_k3cyqgqw_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_k3cyqgqw_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_k3cyqgqw_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_k3cyqgqw_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_mtidie5m_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_mtidie5m_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_mtidie5m_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_mtidie5m_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_mtidie5m_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_nv1uy1vy_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_nv1uy1vy_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_nv1uy1vy_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_nv1uy1vy_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_nv1uy1vy_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_oms1iiyt_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_oms1iiyt_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_oms1iiyt_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_oms1iiyt_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_oms1iiyt_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_pk0fvq2w_wpftmp.AssemblyInfo.cs`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_pk0fvq2w_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_pk0fvq2w_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_pk0fvq2w_wpftmp.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting_pk0fvq2w_wpftmp.sourcelink.json`
+- `obj/Debug/net8.0-windows/UI/MainWindow.baml`
+- `obj/Debug/net8.0-windows/UI/MainWindow.g.cs`
+- `obj/Debug/net8.0-windows/UI/Themes/VSCodeDark.baml`
+- `obj/Debug/net8.0-windows/ref/MEPAutoRouting.dll`
+- `obj/Debug/net8.0-windows/refint/MEPAutoRouting.dll`
+- `obj/MEPAutoRouting_k3cyqgqw_wpftmp.csproj.nuget.dgspec.json`
+- `obj/MEPAutoRouting_k3cyqgqw_wpftmp.csproj.nuget.g.props`
+- `obj/MEPAutoRouting_k3cyqgqw_wpftmp.csproj.nuget.g.targets`
+- `obj/Release/net8.0-windows/MEPAutoRouting_2kdw2xxx_wpftmp.AssemblyInfo.cs`
+- `obj/Release/net8.0-windows/MEPAutoRouting_2kdw2xxx_wpftmp.AssemblyInfoInputs.cache`
+- `obj/Release/net8.0-windows/MEPAutoRouting_2kdw2xxx_wpftmp.GeneratedMSBuildEditorConfig.editorconfig`
+- `obj/Release/net8.0-windows/MEPAutoRouting_2kdw2xxx_wpftmp.assets.cache`
+- `obj/Release/net8.0-windows/MEPAutoRouting_2kdw2xxx_wpftmp.sourcelink.json`
 
-**Modified (0)**
-- none
+**Modified (28)**
+- `Core/AStarPathfinder.cs`
+- `Core/GeometryExtractor.cs`
+- `Routing/RouteBuilder.cs`
+- `Routing/RouteService.cs`
+- `Shared/RouteProblem.cs`
+- `Shared/RoutingConstraints.cs`
+- `Shared/RoutingOptions.cs`
+- `bin/Release/net8.0-windows/MEPAutoRouting.dll`
+- `bin/Release/net8.0-windows/MEPAutoRouting.pdb`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.assets.cache`
+- `obj/Debug/net8.0-windows/MEPAutoRouting.csproj.FileListAbsolute.txt`
+- `obj/MEPAutoRouting.csproj.nuget.dgspec.json`
+- `obj/Release/net8.0-windows/GeneratedInternalTypeHelper.g.cs`
+- `obj/Release/net8.0-windows/MEPAutoRouting.AssemblyInfo.cs`
+- `obj/Release/net8.0-windows/MEPAutoRouting.AssemblyInfoInputs.cache`
+- `obj/Release/net8.0-windows/MEPAutoRouting.csproj.CoreCompileInputs.cache`
+- `obj/Release/net8.0-windows/MEPAutoRouting.dll`
+- `obj/Release/net8.0-windows/MEPAutoRouting.pdb`
+- `obj/Release/net8.0-windows/MEPAutoRouting.sourcelink.json`
+- `obj/Release/net8.0-windows/MEPAutoRouting_MarkupCompile.cache`
+- `obj/Release/net8.0-windows/MEPAutoRouting_MarkupCompile.lref`
+- `obj/Release/net8.0-windows/UI/MainWindow.g.cs`
+- `obj/Release/net8.0-windows/ref/MEPAutoRouting.dll`
+- `obj/Release/net8.0-windows/refint/MEPAutoRouting.dll`
+- `obj/project.assets.json`
+- `obj/project.nuget.cache`
+- `obj/x64/Debug/net8.0-windows/MEPAutoRouting.AssemblyInfo.cs`
+- `obj/x64/Debug/net8.0-windows/MEPAutoRouting.AssemblyInfoInputs.cache`
 
 **Deleted (0)**
 - none
@@ -90,7 +189,7 @@ Continue development of MEP Auto Routing (Revit add-in).
 Assume previous chat history is lost. Use this handover as the source of truth.
 
 Current version: 4.8.3
-Branch: main | Latest commit: 368c65f | handover-bot | 2026-11-22 01:00 | [handover] Daily report 2026-11-22 [skip ci]
+Branch: main | Latest commit: 3305839 | Matthew | 2026-11-24 11:12 | Merge branch 'main' of https://github.com/maczchung/RevitMEP-AutoRouting
 Build status: success (Errors: 0, Warnings: 0)
 
 Environment:
@@ -113,7 +212,8 @@ Known issues:
 - (例如：Wall avoidance fails when wall is curved)
 
 Recent commits:
-- none in last period
+- Merge branch 'main' of https://github.com/maczchung/RevitMEP-AutoRouting
+- 24/11
 
 Next priority:
 1. Wall avoidance enhancement
