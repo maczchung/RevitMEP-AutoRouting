@@ -16,12 +16,20 @@ namespace MEPAutoRouting.Routing
     ///       Document.Create.NewTransitionFitting() to create an automatic reducer.
     ///       Reducer failures are included in FittingFailures, so RouteService rolls
     ///       the complete route back.
+    /// v4.9.1: reducer decisions use source/target nominal connector sizes rather
+    ///         than copper pipe physical/catalogue diameter.
+    /// v4.9.2: RouteService reserves a Lead-to-Origin transition gap before
+    ///         NewTransitionFitting is called.
+    /// v4.9.3: RouteService also creates a straight aligned pipe stub and this
+    ///         builder validates collinearity/opposed connector axes before API creation.
     /// </summary>
     public static class RouteBuilder
     {
         private const double StraightTolDeg = 0.5;
         private const double VerticalDot = 0.999;
         private const double SizeToleranceMm = 0.5;
+        private const double TransitionAxisDotTolerance = 0.995;
+        private const double TransitionLineToleranceMm = 2.0;
 
         // One failed elbow/reducer carries its detail here so RouteService can
         // put the failure in OUTPUT/PROBLEMS and roll back the transaction.
@@ -162,17 +170,9 @@ namespace MEPAutoRouting.Routing
             // 3. Connect route ends. For round piping size mismatch, create a reducer.
             if (o.ConnectEnds && segments.Count > 0)
             {
-                TryConnectOrReduce(
-                    doc,
-                    s.Resolve(doc),
-                    segments[0],
-                    pts[0],
-                    "source",
-                    o,
-                    result,
-                    log,
-                    failureIndex: -1);
-
+                // v4.9.5.1 - merged v4.9.4 commit-stability sequence.
+                // Create the target reducer first while the route is not yet tied
+                // into the source equipment network. Connect/create source last.
                 TryConnectOrReduce(
                     doc,
                     t.Resolve(doc),
@@ -182,7 +182,24 @@ namespace MEPAutoRouting.Routing
                     o,
                     result,
                     log,
+                    routeNominalMm: GetConnectorNominalMm(s),
                     failureIndex: -2);
+
+                if (result.FittingFailures == 0)
+                {
+                    doc.Regenerate();
+                    TryConnectOrReduce(
+                        doc,
+                        s.Resolve(doc),
+                        segments[0],
+                        pts[0],
+                        "source",
+                        o,
+                        result,
+                        log,
+                        routeNominalMm: GetConnectorNominalMm(s),
+                        failureIndex: -1);
+                }
             }
 
             result.Success = result.FittingFailures == 0;
@@ -203,6 +220,7 @@ namespace MEPAutoRouting.Routing
             RouteOptions options,
             RouteResult result,
             Action<LogLevel, string> log,
+            double routeNominalMm,
             int failureIndex)
         {
             string displayLabel = Capitalize(label);
@@ -283,17 +301,70 @@ namespace MEPAutoRouting.Routing
                 routeConnector.Shape == ConnectorProfileType.Round &&
                 equipment.Shape == ConnectorProfileType.Round;
 
+            // v4.9.1 - Reducer decisions must use NOMINAL connector semantics,
+            // not the physical/catalogue diameter of the created pipe.
+            // Example: DN80 copper may have a route connector diameter that is
+            // different from 80 mm, but it is still nominally compatible with
+            // an Ø80 equipment connector.
             double routeDiameterMm = GetRoundDiameterMm(routeConnector);
             double equipmentDiameterMm = GetRoundDiameterMm(equipment);
-            bool sizeDifferent =
+
+            // The source connector defines the route nominal size in the current
+            // Match Source workflow. Source therefore connects directly. Target
+            // receives a reducer only when its nominal connector size genuinely
+            // differs from the source nominal size.
+            // v4.9.5 - use the actual model connector diameters to decide whether
+            // Revit needs a transition fitting. Nominal/catalogue compatibility is
+            // useful for UI warnings, but direct ConnectTo still requires equal
+            // physical connector diameters.
+            bool physicalSizeDifferent =
                 routeDiameterMm > 0 &&
                 equipmentDiameterMm > 0 &&
                 Math.Abs(routeDiameterMm - equipmentDiameterMm) > SizeToleranceMm;
 
+            double connectorGapMm = routeConnector.Origin.DistanceTo(equipment.Origin) * 304.8;
+            XYZ routeAxis = GetConnectorAxis(routeConnector);
+            XYZ equipmentAxis = GetConnectorAxis(equipment);
+            XYZ gapVector = equipment.Origin - routeConnector.Origin;
+            XYZ gapDirection = gapVector.GetLength() > 1e-9 ? gapVector.Normalize() : XYZ.Zero;
+
+            double axisDot = routeAxis != null && equipmentAxis != null
+                ? routeAxis.DotProduct(equipmentAxis)
+                : 0.0;
+            double routeLineDot = routeAxis != null && gapDirection.GetLength() > 0
+                ? Math.Abs(routeAxis.DotProduct(gapDirection))
+                : 0.0;
+            double equipmentLineDot = equipmentAxis != null && gapDirection.GetLength() > 0
+                ? Math.Abs(equipmentAxis.DotProduct(gapDirection))
+                : 0.0;
+
+            bool axesOpposed = axisDot <= -TransitionAxisDotTolerance;
+            bool gapCollinear =
+                routeLineDot >= TransitionAxisDotTolerance &&
+                equipmentLineDot >= TransitionAxisDotTolerance;
+
+            log?.Invoke(
+                LogLevel.Info,
+                $"{displayLabel} transition precheck: route nominal Ø{routeNominalMm:0.#} mm, " +
+                $"route physical Ø{routeDiameterMm:0.#} mm, connector Ø{equipmentDiameterMm:0.#} mm, " +
+                $"gap={connectorGapMm:0.#} mm, axis dot={axisDot:0.000}, " +
+                $"route-line={routeLineDot:0.000}, equipment-line={equipmentLineDot:0.000}, " +
+                $"reducer required={physicalSizeDifferent}.");
+
             try
             {
-                if (canCreateReducer && sizeDifferent)
+                if (canCreateReducer && physicalSizeDifferent)
                 {
+                    if (connectorGapMm < TransitionLineToleranceMm)
+                        throw new InvalidOperationException(
+                            $"Transition gap is only {connectorGapMm:0.#} mm.");
+
+                    if (!axesOpposed || !gapCollinear)
+                        throw new InvalidOperationException(
+                            $"Transition connectors are not collinear and opposed " +
+                            $"(axis dot {axisDot:0.000}, route-line {routeLineDot:0.000}, " +
+                            $"equipment-line {equipmentLineDot:0.000}).");
+
                     FamilyInstance reducer =
                         doc.Create.NewTransitionFitting(routeConnector, equipment);
 
@@ -307,7 +378,7 @@ namespace MEPAutoRouting.Routing
                         LogLevel.Success,
                         $"{displayLabel} reducer created: " +
                         $"route Ø{routeDiameterMm:0.#} mm -> " +
-                        $"connector Ø{equipmentDiameterMm:0.#} mm, " +
+                        $"connector Ø{equipmentDiameterMm:0.#} mm, gap {connectorGapMm:0.#} mm, " +
                         $"ElementId {reducer.Id.Value}.");
                 }
                 else
@@ -330,7 +401,7 @@ namespace MEPAutoRouting.Routing
                         ? $"route Ø{routeDiameterMm:0.#} mm, connector Ø{equipmentDiameterMm:0.#} mm"
                         : "size unavailable";
 
-                string action = canCreateReducer && sizeDifferent
+                string action = canCreateReducer && physicalSizeDifferent
                     ? "reducer creation"
                     : "connection";
 
@@ -360,6 +431,39 @@ namespace MEPAutoRouting.Routing
                     AngleDeg = angleDeg,
                     Detail = detail
                 });
+        }
+
+        private static XYZ GetConnectorAxis(Connector connector)
+        {
+            if (connector == null)
+                return null;
+
+            try
+            {
+                XYZ axis = connector.CoordinateSystem?.BasisZ;
+                return axis != null && axis.GetLength() > 1e-9
+                    ? axis.Normalize()
+                    : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static double GetConnectorNominalMm(ConnectorInfo connector)
+        {
+            if (connector == null || connector.Shape != ConnectorProfileType.Round)
+                return 0;
+
+            try
+            {
+                return Geom.FtToMm(connector.Radius * 2);
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         private static double GetRoundDiameterMm(Connector connector)

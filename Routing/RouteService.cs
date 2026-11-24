@@ -100,42 +100,88 @@ namespace MEPAutoRouting.Routing
             bool matchSourceMode = !request.Size.HasValue;
             double sourceConnectorMm = Geom.FtToMm(source.Radius * 2);
 
-            void CheckSize(ConnectorEndpoint ep, string label)
+            // v4.9.3 - determine genuine nominal mismatch and reserve physical
+            // space for NewTransitionFitting. A mismatch is logged here; failure
+            // is reported only if RouteBuilder cannot create the reducer.
+            bool CheckSize(ConnectorEndpoint ep, string label)
             {
                 if (ep == null || ep.Radius <= 0)
-                    return;
+                    return false;
 
                 double connectorMm = Geom.FtToMm(ep.Radius * 2);
-
-                // Match Source mode compares both endpoints with the source
-                // connector nominal diameter. Explicit-size mode compares with
-                // the user-selected route size.
-                double comparisonMm = matchSourceMode
-                    ? sourceConnectorMm
-                    : routeMm;
-
+                double comparisonMm = matchSourceMode ? sourceConnectorMm : routeMm;
                 bool compatible = Math.Abs(connectorMm - comparisonMm) <= 0.5;
                 string displayLabel = char.ToUpperInvariant(label[0]) + label.Substring(1);
 
                 log?.Invoke(
-                    $"{displayLabel} size check: " +
-                    $"connector={connectorMm:0.#} mm nominal, " +
-                    $"route catalog={routeMm:0.#} mm, " +
-                    $"comparison nominal={comparisonMm:0.#} mm, " +
-                    $"mode={(matchSourceMode ? "match source" : "explicit size")}, " +
-                    $"compatible={compatible}.");
+                    $"{displayLabel} size check: connector={connectorMm:0.#} mm nominal, " +
+                    $"route catalog={routeMm:0.#} mm, comparison nominal={comparisonMm:0.#} mm, " +
+                    $"mode={(matchSourceMode ? "match source" : "explicit size")}, compatible={compatible}.");
 
                 if (!compatible)
-                {
-                    result.Problems.Add(RouteProblem.Warn(
-                        $"{displayLabel} connector Ø{connectorMm:0.#} mm " +
-                        $"does not match route nominal size Ø{comparisonMm:0.#} mm - " +
-                        "a reducer is required but automatic reducer creation is not implemented."));
-                }
+                    log?.Invoke($"{displayLabel}: automatic reducer planned (Ø{comparisonMm:0.#} -> Ø{connectorMm:0.#} mm).");
+
+                return !compatible;
             }
 
-            CheckSize(source, "source");
-            CheckSize(target, "target");
+            // Match-source mode always makes the source compatible. In explicit
+            // size mode, a source reducer may also be required.
+            bool sourceNominalMismatch = CheckSize(source, "source");
+            bool targetNominalMismatch = CheckSize(target, "target");
+
+            // v4.9.5 - Revit fitting creation must follow the physical connector
+            // diameters that are actually present in the model. Copper catalogue
+            // Ø76 is nominally DN80-compatible, but it cannot be connected directly
+            // to an equipment connector whose physical connector is Ø80.
+            // Keep nominal mismatch for user-facing semantics, and use physical
+            // mismatch to decide whether transition geometry is required.
+            double sourcePhysicalMm = Geom.FtToMm(source.Radius * 2);
+            double targetPhysicalMm = Geom.FtToMm(target.Radius * 2);
+            bool sourceNeedsReducer = Math.Abs(routeMm - sourcePhysicalMm) > 0.5;
+            bool targetNeedsReducer = Math.Abs(routeMm - targetPhysicalMm) > 0.5;
+
+            log?.Invoke(
+                $"Physical transition plan: route catalogue Ø{routeMm:0.#} mm, " +
+                $"source Ø{sourcePhysicalMm:0.#} mm -> reducer={sourceNeedsReducer}, " +
+                $"target Ø{targetPhysicalMm:0.#} mm -> reducer={targetNeedsReducer}; " +
+                $"nominal mismatch source={sourceNominalMismatch}, target={targetNominalMismatch}.");
+
+            // v4.9.3 - a transition needs BOTH a fitting gap and a straight,
+            // collinear pipe stub. The A* endpoint is moved further out by the stub,
+            // then the final path returns along the connector axis to ReducerPoint.
+            double sourceMmForTransition = Geom.FtToMm(source.Radius * 2);
+            double targetMmForTransition = Geom.FtToMm(target.Radius * 2);
+            double reducerGapMm = Math.Max(
+                150.0,
+                Math.Max(sourceMmForTransition, targetMmForTransition) * 1.5);
+            // v4.9.5.1 - merged v4.9.4 commit-stability rule.
+            // The straight segment sits between an elbow and a reducer. DN x 2
+            // allowed both fittings to be created, but Revit could reverse the
+            // intervening pipe while resolving fitting take-off at commit.
+            double straightStubMm = Math.Max(
+                300.0,
+                routeMm * 4.0);
+            double reducerGapFt = Geom.MmToFt(reducerGapMm);
+            double straightStubFt = Geom.MmToFt(straightStubMm);
+
+            XYZ sourceReducerPoint = source.Origin + source.Direction * reducerGapFt;
+            XYZ targetReducerPoint = target.Origin + target.Direction * reducerGapFt;
+
+            if (sourceNeedsReducer)
+            {
+                source = source.WithLeadLength(reducerGapFt + straightStubFt);
+                log?.Invoke(
+                    $"Source reducer geometry: gap {reducerGapMm:0} mm + " +
+                    $"aligned stub {straightStubMm:0} mm.");
+            }
+
+            if (targetNeedsReducer)
+            {
+                target = target.WithLeadLength(reducerGapFt + straightStubFt);
+                log?.Invoke(
+                    $"Target reducer geometry: gap {reducerGapMm:0} mm + " +
+                    $"aligned stub {straightStubMm:0} mm.");
+            }
 
             // v4.6 – configurable margin around the route region (default 2000 mm).
             double regionMargin = Geom.MmToFt(options.RegionMarginMm > 0 ? options.RegionMarginMm : 2000);
@@ -197,8 +243,8 @@ namespace MEPAutoRouting.Routing
                         "No walls found in the routing region – check 'Include linked model walls' and that the link is loaded."));
 
                 constraints = new RoutingConstraints(request.Boundary, walls, clearance, radius, options.ClearanceOnBoundary);
-                constraints.AddExemptCorridor(source, Geom.MmToFt(150));
-                constraints.AddExemptCorridor(target, Geom.MmToFt(150));
+                constraints.AddExemptCorridor(source, Math.Max(Geom.MmToFt(150), source.LeadLength));
+                constraints.AddExemptCorridor(target, Math.Max(Geom.MmToFt(150), target.LeadLength));
 
                 finder = new AStarPathfinder(doc, CreateBounds(regionMin, regionMax), constraints);
                 finder.SetVerticalLimits(zLimitMin, zLimitMax);
@@ -216,10 +262,26 @@ namespace MEPAutoRouting.Routing
                 return result;
             }
 
-            var path = new List<XYZ> { source.Origin };
+            // v4.9.3 - reducer endpoints contain a straight aligned pipe stub:
+            // Equipment Origin <- fitting gap -> ReducerPoint <- straight stub -> A* Lead.
+            var path = new List<XYZ>();
+
+            if (sourceNeedsReducer)
+                path.Add(sourceReducerPoint);
+            else
+                path.Add(source.Origin);
+
             path.AddRange(middle);
-            path.Add(target.Origin);
-            result.Path = PathUtils.MergeCollinear(path);
+
+            if (targetNeedsReducer)
+                path.Add(targetReducerPoint);
+            else
+                path.Add(target.Origin);
+
+            result.Path = PathUtils.MergeCollinear(PathUtils.RemoveDuplicates(path));
+            log?.Invoke(
+                $"Reducer geometry: gap={reducerGapMm:0} mm, aligned stub={straightStubMm:0} mm, " +
+                $"source reducer={sourceNeedsReducer}, target reducer={targetNeedsReducer}.");
 
             result.Problems.AddRange(PathValidator.Validate(result.Path,
                 Geom.MmToFt(request.MinSegmentMm > 0 ? request.MinSegmentMm : 0), constraints.IsBlocked, Geom.MmToFt(50) / 2.0,
@@ -292,16 +354,17 @@ namespace MEPAutoRouting.Routing
                     result.CreatedElbows = built.Fittings;
                     result.FittingFailures = built.FittingFailures;
                     result.Created.AddRange(built.Created);
-                    log?.Invoke($"Elbows: {built.Fittings} created, {built.FittingFailures} failed.");
+                    log?.Invoke($"Elbows: {built.Fittings} created.");
+                    log?.Invoke($"Fitting/connection failures: {built.FittingFailures}.");
 
-                    // v4.8 (ISS-026) – any elbow failure rolls the whole route back
+                    // v4.9.3 - any elbow, reducer or endpoint fitting failure rolls the whole route back
                     if (built.FittingFailures > 0)
                     {
                         transaction.RollBack();
                         foreach (RouteBuilder.FittingFailureInfo f in built.FittingFailureDetails)
-                            log?.Invoke($"Elbow failure detail: #{f.Index}, {f.AngleDeg:0.00}°, {f.Detail}.");
+                            log?.Invoke($"Fitting failure detail: #{f.Index}, {f.AngleDeg:0.00}°, {f.Detail}.");
                         result.Problems.Add(RouteProblem.Error(
-                            $"Route not created: {built.FittingFailures} elbow(s) failed. See OUTPUT for details."));
+                            $"Route not created: {built.FittingFailures} fitting/connection failure(s). See OUTPUT for details."));
                         return result;
                     }
 

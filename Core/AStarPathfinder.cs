@@ -38,6 +38,12 @@ namespace MEPAutoRouting.Core
         private const double MinOverlapRatioToKeep = 0.18;
         private const double LongBoundaryRatio = 0.55;
         private const double BoundaryNearToleranceFt = 0.75;
+        // v4.9.6: keep the fine aligned grid but require enough straight pipe
+        // between consecutive turns for elbow/reducer take-off.
+        private static readonly double AbsoluteMinFittingStraightFt = 300.0 / 304.8;
+        private double _minFittingStraightFt = AbsoluteMinFittingStraightFt;
+        public double MinFittingStraightFt => _minFittingStraightFt;
+        public double MinFittingStraightMm => _minFittingStraightFt * 304.8;
 
         private XYZ _origin;
         private double _gx, _gy, _gz;
@@ -53,6 +59,13 @@ namespace MEPAutoRouting.Core
         public int TotalNodeCount { get; private set; }
 
         private double? _verticalMinFt, _verticalMaxFt;
+
+        // v4.9.7 - structural columns/framing use the same user clearance as
+        // walls. The box offset includes pipe outside radius, so the requested
+        // clearance is measured from the pipe outside surface.
+        private double ElementObstacleOffsetFt => Math.Max(
+            GridSize * ObstacleToleranceFactor,
+            _constraints?.ElementObstacleOffset ?? 0.0);
 
         // v4.7 (ISS-004) – obstacle boxes used by the last FindPath call, retained for post-slope re-validation.
         private List<BoundingBoxXYZ> _usedObstacles;
@@ -80,6 +93,9 @@ namespace MEPAutoRouting.Core
         {
             _startEndpoint = startEndpoint;
             _endEndpoint = endEndpoint;
+            double endpointBasedFt = Math.Max(startEndpoint?.Radius ?? 0.0,
+                                               endEndpoint?.Radius ?? 0.0) * 8.0;
+            _minFittingStraightFt = Math.Max(AbsoluteMinFittingStraightFt, endpointBasedFt);
             try { return FindPath(start, end, startDir); }
             finally { _startEndpoint = null; _endEndpoint = null; }
         }
@@ -169,6 +185,19 @@ namespace MEPAutoRouting.Core
                             LastFailure = MakeFailure(obstacleResult, iterations);
                             return new List<XYZ>();
                         }
+                        int shortSegment = FindShortTurnToTurnSegment(result);
+                        if (shortSegment >= 0)
+                        {
+                            double actualMm = result[shortSegment].DistanceTo(result[shortSegment + 1]) * 304.8;
+                            LastFailure = new PathFailureInfo
+                            {
+                                Reason = PathFailureReason.FittingSpace,
+                                Message = $"No constructible path found - segment {shortSegment} is {actualMm:0} mm between two fittings; minimum {MinFittingStraightMm:0} mm.",
+                                Diagnostics = BuildDiagnostics(obstacleResult, iterations) + Environment.NewLine +
+                                              $"  Fitting spacing: {actualMm:0} / {MinFittingStraightMm:0} mm"
+                            };
+                            return new List<XYZ>();
+                        }
                         return result;
                     }
 
@@ -182,15 +211,21 @@ namespace MEPAutoRouting.Core
                         int dx2 = neighbor.X - current.X;
                         int dy2 = neighbor.Y - current.Y;
                         int dz2 = neighbor.Z - current.Z;
+                        var nextDirection = (dx2, dy2, dz2);
+
+                        // Reject turn -> short run -> turn during search.
+                        if (current.Parent != null && current.Direction != nextDirection &&
+                            !HasFittingSpaceBeforeTurn(current))
+                            continue;
 
                         double movementCost = dx2 != 0 ? _gx : dy2 != 0 ? _gy : _gz;
                         if (dz2 != 0) movementCost += ZMovePenalty;
 
                         if (current.Parent != null)
                         {
-                            movementCost += PathUtils.TurnPenalty(current.Direction, (dx2, dy2, dz2), TurnPenalty);
+                            movementCost += PathUtils.TurnPenalty(current.Direction, nextDirection, TurnPenalty);
                             if (current.Direction == (-dx2, -dy2, -dz2)) movementCost += ReversePenalty;
-                            else if (current.Direction == (dx2, dy2, dz2)) movementCost -= ContinueStraightBonus;
+                            else if (current.Direction == nextDirection) movementCost -= ContinueStraightBonus;
                         }
                         else if (IsSameMajorAxis(new XYZ(dx2, dy2, dz2), normalizedStartDir))
                         {
@@ -201,7 +236,7 @@ namespace MEPAutoRouting.Core
                         if (tentativeG < neighbor.GCost)
                         {
                             neighbor.Parent = current;
-                            neighbor.Direction = (dx2, dy2, dz2);
+                            neighbor.Direction = nextDirection;
                             neighbor.GCost = tentativeG;
                             neighbor.HCost = GetHeuristic(neighbor.Center, endNode.Center);
                             openHeap.Push(neighbor, neighbor.FCost);
@@ -310,7 +345,9 @@ namespace MEPAutoRouting.Core
                 " (used " + obstacleResult.UsedObstacles.Count +
                 ", ignored boundary " + obstacleResult.IgnoredBoundaryCount +
                 ", ignored low-overlap " + obstacleResult.IgnoredLowOverlapCount + ")" +
-            Environment.NewLine + "  Blocked nodes " + BlockedNodeCount + " / " + TotalNodeCount;
+            Environment.NewLine + $"  Element clearance offset: {ElementObstacleOffsetFt * 304.8:0} mm (clearance + pipe radius)" +
+            Environment.NewLine + "  Blocked nodes " + BlockedNodeCount + " / " + TotalNodeCount +
+            Environment.NewLine + $"  Minimum fitting straight: {MinFittingStraightMm:0} mm";
 
         private SearchBox BuildSearchBox(XYZ start, XYZ end)
         {
@@ -445,7 +482,7 @@ namespace MEPAutoRouting.Core
             if (point.DistanceTo(start) < GridSize * EscapeZoneCells || point.DistanceTo(end) < GridSize * EscapeZoneCells)
                 return false;
 
-            double tol = GridSize * ObstacleToleranceFactor;
+            double tol = ElementObstacleOffsetFt;
             foreach (BoundingBoxXYZ bb in obstacles)
             {
                 if (bb == null) continue;
@@ -491,7 +528,7 @@ namespace MEPAutoRouting.Core
             double length = p1.DistanceTo(p2);
             if (length < 1e-9) return false;
             int n = Math.Max(4, (int)Math.Ceiling(length / (GridSize * SegmentSampleFactor)));
-            double tol = GridSize * ObstacleToleranceFactor;
+            double tol = ElementObstacleOffsetFt;
             for (int i = 0; i <= n; i++)
             {
                 XYZ p = p1 + (p2 - p1) * ((double)i / n);
@@ -514,6 +551,38 @@ namespace MEPAutoRouting.Core
         private static bool IsInsideBox(XYZ p, XYZ min, XYZ max) =>
             p != null && min != null && max != null &&
             p.X >= min.X && p.X <= max.X && p.Y >= min.Y && p.Y <= max.Y && p.Z >= min.Z && p.Z <= max.Z;
+
+        // ================================================================ fitting spacing
+        private bool HasFittingSpaceBeforeTurn(AStarNode current)
+        {
+            if (current == null || current.Parent == null) return true;
+            var direction = current.Direction;
+            double straightFt = 0.0;
+            AStarNode node = current;
+            while (node?.Parent != null && node.Direction == direction)
+            {
+                straightFt += node.Center.DistanceTo(node.Parent.Center);
+                if (straightFt + SnapTolFt >= _minFittingStraightFt) return true;
+                node = node.Parent;
+            }
+            return straightFt + SnapTolFt >= _minFittingStraightFt;
+        }
+
+        private int FindShortTurnToTurnSegment(IList<XYZ> path)
+        {
+            if (path == null || path.Count < 4) return -1;
+            for (int i = 1; i < path.Count - 2; i++)
+            {
+                XYZ before = path[i] - path[i - 1];
+                XYZ segment = path[i + 1] - path[i];
+                XYZ after = path[i + 2] - path[i + 1];
+                if (before.GetLength() < 1e-9 || segment.GetLength() < 1e-9 || after.GetLength() < 1e-9) continue;
+                bool turnAtStart = Math.Abs(before.Normalize().DotProduct(segment.Normalize())) < 0.999;
+                bool turnAtEnd = Math.Abs(segment.Normalize().DotProduct(after.Normalize())) < 0.999;
+                if (turnAtStart && turnAtEnd && segment.GetLength() + SnapTolFt < _minFittingStraightFt) return i;
+            }
+            return -1;
+        }
 
         // ================================================================ path
 
@@ -568,7 +637,7 @@ namespace MEPAutoRouting.Core
         private static string GetNodeId(int x, int y, int z) => x + "," + y + "," + z;
     }
 
-    public enum PathFailureReason { None, OutsideRoutingVolume, SourceEnclosed, TargetEnclosed, NoPath, Exception }
+    public enum PathFailureReason { None, OutsideRoutingVolume, SourceEnclosed, TargetEnclosed, NoPath, FittingSpace, Exception }
 
     /// <summary>v4.6 – structured pathfinder failure. Message goes to PROBLEMS, Diagnostics to OUTPUT.</summary>
     public sealed class PathFailureInfo

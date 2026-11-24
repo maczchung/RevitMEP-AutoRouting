@@ -43,9 +43,17 @@ namespace MEPAutoRouting
                         "the pipe would be skewed and elbows cannot be created.", i));
 
                 bool isLead = i == 0 || i == path.Count - 2;
-                if (!isLead && len < minSegmentFt)
-                    list.Add(RouteProblem.Warn(
-                        $"Segment {i} is only {Geom.FtToMm(len):0} mm long – the elbow may not fit.", i));
+                if (!isLead && minSegmentFt > 0 && len < minSegmentFt)
+                {
+                    bool turnAtStart = i > 0 && IsTurn(path[i - 1], path[i], path[i + 1]);
+                    bool turnAtEnd = i + 2 < path.Count && IsTurn(path[i], path[i + 1], path[i + 2]);
+                    if (turnAtStart && turnAtEnd)
+                        list.Add(RouteProblem.Error(
+                            $"Segment {i} is only {Geom.FtToMm(len):0} mm between two fittings; minimum fitting space is {Geom.FtToMm(minSegmentFt):0} mm.", i));
+                    else
+                        list.Add(RouteProblem.Warn(
+                            $"Segment {i} is only {Geom.FtToMm(len):0} mm long; minimum preferred length is {Geom.FtToMm(minSegmentFt):0} mm.", i));
+                }
 
                 if (i < path.Count - 2)
                 {
@@ -72,6 +80,14 @@ namespace MEPAutoRouting
                 }
             }
             return list;
+        }
+
+        private static bool IsTurn(XYZ a, XYZ b, XYZ c)
+        {
+            XYZ v1 = b - a;
+            XYZ v2 = c - b;
+            if (v1.GetLength() < 1e-9 || v2.GetLength() < 1e-9) return false;
+            return Math.Abs(v1.Normalize().DotProduct(v2.Normalize())) < 0.999;
         }
 
         public static bool IsAxisAligned(XYZ v, bool allowSlope)

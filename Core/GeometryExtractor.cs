@@ -4,6 +4,12 @@ using Autodesk.Revit.DB;
 
 namespace MEPAutoRouting.Core
 {
+    /// <summary>
+    /// Extracts host and linked-model obstacle boxes. AStarPathfinder applies
+    /// the configured element clearance plus pipe radius to these boxes.
+    /// Supported calls include OST_Columns, OST_StructuralColumns and
+    /// OST_StructuralFraming.
+    /// </summary>
     public class GeometryExtractor
     {
         private readonly Document _doc;

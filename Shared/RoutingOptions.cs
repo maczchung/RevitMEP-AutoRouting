@@ -8,7 +8,18 @@ namespace MEPAutoRouting
     /// <summary>UI 設定（mm），記低喺 %AppData%\MEPAutoRouting\settings.json。</summary>
     public sealed class RoutingOptions
     {
+        // v4.9.7 - retained for JSON and existing XAML/ViewModel compatibility.
+        // The value now applies to walls, architectural/structural columns and
+        // structural framing in both host and linked models.
         public double WallClearanceMm { get; set; } = 50;
+
+        // Neutral code-facing alias. JsonIgnore avoids writing a duplicate value.
+        [System.Text.Json.Serialization.JsonIgnore]
+        public double ElementClearanceMm
+        {
+            get => WallClearanceMm;
+            set => WallClearanceMm = value;
+        }
         public bool IncludeLinkWalls { get; set; } = true;
         public bool ClearanceOnBoundary { get; set; } = true;
         public double RegionMarginMm { get; set; } = 2000;   // v4.6 – margin around the route region (wall collection + one A* retry)

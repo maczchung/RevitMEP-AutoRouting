@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyCopyrightAttribute("© 2026 Cundall HK. Developed by Matthew Kwok.")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.6.4.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.6.4+9ecb7d6cd3fbb2231566dfb2f28af57e39ef1f3e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.6.4+3ca515670b00d3a211f90b28d5c51d3ee991358c")]
 [assembly: System.Reflection.AssemblyProductAttribute("MEP Auto Routing")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MEP Auto Routing for Revit 2025")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.6.4.0")]

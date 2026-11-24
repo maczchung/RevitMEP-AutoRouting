@@ -11,6 +11,12 @@ namespace MEPAutoRouting
         public IReadOnlyList<WallObstacle> Walls { get; }
         public double WallClearance { get; }
         public double PipeRadius { get; }
+
+        // v4.9.7 - one clearance rule for walls and structural obstacle boxes.
+        // This is the centreline offset required to keep the OUTSIDE of the pipe
+        // WallClearance away from walls, columns and structural framing.
+        public double ElementObstacleOffset => WallClearance + PipeRadius;
+
         public bool ClearanceOnBoundary { get; }
 
         private readonly List<(XYZ A, XYZ B, double R)> _exempt = new();
@@ -33,7 +39,7 @@ namespace MEPAutoRouting
         public void AddExemptCorridor(ConnectorEndpoint ep, double cellSize)
             => AddExemptSegment(ep.Origin, ep.Lead, PipeRadius + cellSize);
 
-        public double RequiredDistance(WallObstacle w) => w.HalfWidth + WallClearance + PipeRadius;
+        public double RequiredDistance(WallObstacle w) => w.HalfWidth + ElementObstacleOffset;
 
         public bool IsBlocked(XYZ p) => GetBlockReason(p) != null;
 
